@@ -22,6 +22,7 @@ class ServicesClient:
     async def get_socio_by_whatsapp(self, number: str) -> dict | None:
         """Returns the socio dict, or None if no socio is registered with that number."""
         try:
+            print(f"Fetching from {settings.services_api_base_url}/socios/by-whatsapp/{number}")
             resp = await self._client.get(f"/socios/by-whatsapp/{number}")
         except httpx.HTTPError as exc:
             logger.error("Network error fetching socio for %s: %s", number, exc)
