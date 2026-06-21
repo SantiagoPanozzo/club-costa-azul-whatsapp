@@ -8,6 +8,7 @@ Steps:
   AWAITING_CONFIRM       -> waiting for Confirmar/Cancelar
 """
 import logging
+import traceback
 
 from . import services_client as svc
 from .services_client import ServicesAPIError
@@ -50,7 +51,9 @@ async def handle_message(incoming: IncomingMessage) -> None:
 async def _sign_in(phone: str, session: Session) -> None:
     try:
         socio = await svc.services_client.get_socio_by_whatsapp(phone)
-    except ServicesAPIError:
+    except ServicesAPIError as sae:
+        logger.warning("Error looking up socio for phone %s", phone)
+        traceback.print_exc()
         await whatsapp_client.send_text(phone, GENERIC_ERROR)
         return
 
@@ -100,6 +103,8 @@ async def _show_activities_entry(phone: str, session: Session) -> None:
         inscripciones = await svc.services_client.get_inscripciones_socio(socio_id)
         actividades = await svc.services_client.get_actividades()
     except ServicesAPIError:
+        logger.warning("Error fetching activities or inscriptions for socio %s", socio_id)
+        traceback.print_exc()
         await whatsapp_client.send_text(phone, GENERIC_ERROR)
         return
 
@@ -190,6 +195,8 @@ async def _handle_confirm(phone: str, session: Session, incoming: IncomingMessag
         try:
             await svc.services_client.post_inscripcion(session.socio["id"], activity["id"])
         except ServicesAPIError:
+            logger.warning("Error creating inscription for socio %s to activity %s", session.socio["id"], activity["id"])
+            traceback.print_exc()
             await whatsapp_client.send_text(phone, GENERIC_ERROR)
             await _send_main_menu(phone, session)
             return
