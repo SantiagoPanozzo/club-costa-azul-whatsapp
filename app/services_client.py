@@ -48,7 +48,7 @@ class ServicesClient:
 
     async def get_inscripciones_socio(self, socio_id: str) -> list[dict]:
         try:
-            resp = await self._client.get(f"/inscripciones/socio/{socio_id}")
+            resp = await self._client.get(f"/socio/{socio_id}/inscripciones")
         except httpx.HTTPError as exc:
             logger.error("Network error fetching inscripciones for %s: %s", socio_id, exc)
             raise ServicesAPIError(str(exc)) from exc
