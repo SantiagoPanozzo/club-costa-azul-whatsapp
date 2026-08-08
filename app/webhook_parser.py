@@ -31,6 +31,7 @@ Reference payload shape (messages event):
   }]
 }
 """
+
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -82,7 +83,12 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
                         interactive_id = interactive.get("button_reply", {}).get("id")
 
                 results.append(
-                    IncomingMessage(phone=phone, type=msg_type, text=text, interactive_id=interactive_id)
+                    IncomingMessage(
+                        phone=phone,
+                        type=msg_type,
+                        text=text,
+                        interactive_id=interactive_id,
+                    )
                 )
 
     return results

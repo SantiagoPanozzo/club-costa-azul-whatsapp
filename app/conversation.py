@@ -7,6 +7,7 @@ Steps:
   ACTIVITY_AWAITING_CHOICE -> waiting for the user to pick an activity from the list
   AWAITING_CONFIRM       -> waiting for Confirmar/Cancelar
 """
+
 import logging
 import traceback
 
@@ -51,7 +52,7 @@ async def handle_message(incoming: IncomingMessage) -> None:
 async def _sign_in(phone: str, session: Session) -> None:
     try:
         socio = await svc.services_client.get_socio_by_whatsapp(phone)
-    except ServicesAPIError as sae:
+    except ServicesAPIError:
         logger.warning("Error looking up socio for phone %s", phone)
         traceback.print_exc()
         await whatsapp_client.send_text(phone, GENERIC_ERROR)
@@ -128,14 +129,13 @@ async def _show_activities_entry(phone: str, session: Session) -> None:
     disponibles = [
         a
         for a in actividades
-        if a.get("estado") == "Activa"
-        and a.get("cupoDisponible", 0) > 0
-        and a["id"] not in inscriptas_ids
+        if a.get("estado") == "Activa" and a.get("cupoDisponible", 0) > 0 and a["id"] not in inscriptas_ids
     ]
 
     if not disponibles:
         await whatsapp_client.send_text(
-            phone, "No hay otras actividades disponibles para inscribirte en este momento."
+            phone,
+            "No hay otras actividades disponibles para inscribirte en este momento.",
         )
         await _send_main_menu(phone, session)
         return
@@ -167,11 +167,12 @@ async def _handle_activity_choice(phone: str, session: Session, incoming: Incomi
         await whatsapp_client.send_text(phone, "Por favor, elegí una actividad de la lista. 👇")
         return
 
-    activity_id = iid[len(ACTIVITY_PREFIX):]
+    activity_id = iid[len(ACTIVITY_PREFIX) :]
     activity = session.available_activities.get(activity_id)
     if not activity:
         await whatsapp_client.send_text(
-            phone, "Esa actividad ya no está disponible. Te muestro la lista actualizada."
+            phone,
+            "Esa actividad ya no está disponible. Te muestro la lista actualizada.",
         )
         await _show_activities_entry(phone, session)
         return
@@ -195,7 +196,11 @@ async def _handle_confirm(phone: str, session: Session, incoming: IncomingMessag
         try:
             await svc.services_client.post_inscripcion(session.socio["id"], activity["id"])
         except ServicesAPIError:
-            logger.warning("Error creating inscription for socio %s to activity %s", session.socio["id"], activity["id"])
+            logger.warning(
+                "Error creating inscription for socio %s to activity %s",
+                session.socio["id"],
+                activity["id"],
+            )
             traceback.print_exc()
             await whatsapp_client.send_text(phone, GENERIC_ERROR)
             await _send_main_menu(phone, session)

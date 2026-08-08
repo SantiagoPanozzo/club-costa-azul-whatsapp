@@ -7,6 +7,7 @@ NOTE: This is intentionally simple for the bootstrap version. It is:
 For production, replace with Redis or a DB-backed store, keeping the same
 get/reset interface so the rest of the code doesn't need to change.
 """
+
 import threading
 from dataclasses import dataclass, field
 from typing import Optional

@@ -1,4 +1,5 @@
 """Client for the Club Costa Azul internal services API."""
+
 import logging
 
 import httpx
@@ -70,7 +71,12 @@ class ServicesClient:
             )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
-            logger.error("Error creating inscripcion (socio=%s, actividad=%s): %s", socio_id, actividad_id, exc)
+            logger.error(
+                "Error creating inscripcion (socio=%s, actividad=%s): %s",
+                socio_id,
+                actividad_id,
+                exc,
+            )
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
