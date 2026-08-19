@@ -1,4 +1,5 @@
 """Client for sending outbound messages via Meta's WhatsApp Cloud API (Graph API)."""
+
 import logging
 
 import httpx
@@ -18,8 +19,7 @@ def _truncate(text: str, limit: int) -> str:
 class WhatsAppClient:
     def __init__(self):
         self._url = (
-            f"https://graph.facebook.com/{settings.whatsapp_api_version}"
-            f"/{settings.whatsapp_phone_number_id}/messages"
+            f"https://graph.facebook.com/{settings.whatsapp_api_version}/{settings.whatsapp_phone_number_id}/messages"
         )
         self._client = httpx.AsyncClient(
             headers={
@@ -41,7 +41,12 @@ class WhatsAppClient:
             # better to do than retry on the next user message.
             body = getattr(exc, "response", None)
             body_text = body.text if body is not None else ""
-            logger.error("Error sending WhatsApp message: %s | response=%s | payload=%s", exc, body_text, payload)
+            logger.error(
+                "Error sending WhatsApp message: %s | response=%s | payload=%s",
+                exc,
+                body_text,
+                payload,
+            )
 
     async def send_text(self, to: str, body: str) -> None:
         await self._send(
@@ -65,7 +70,10 @@ class WhatsAppClient:
                     "body": {"text": body},
                     "action": {
                         "buttons": [
-                            {"type": "reply", "reply": {"id": bid, "title": _truncate(title, 20)}}
+                            {
+                                "type": "reply",
+                                "reply": {"id": bid, "title": _truncate(title, 20)},
+                            }
                             for bid, title in buttons[:3]
                         ]
                     },

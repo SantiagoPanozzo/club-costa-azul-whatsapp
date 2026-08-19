@@ -1,29 +1,22 @@
-"""
-In-memory conversation state, keyed by phone number.
-
-NOTE: This is intentionally simple for the bootstrap version. It is:
-- process-local (won't work correctly with >1 instance/replica)
-- volatile (lost on restart / redeploy, mid-conversation)
-For production, replace with Redis or a DB-backed store, keeping the same
-get/reset interface so the rest of the code doesn't need to change.
-"""
 import threading
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 
 @dataclass
 class Session:
-    step: str = "START"
-    socio: Optional[dict] = None
-    available_activities: dict = field(default_factory=dict)  # activity_id -> activity dict
-    selected_activity: Optional[dict] = None
+    socio: dict[str, object] | None = None
+    active_flow: str | None = None
+    flow_state: object = None
+
+    def end_flow(self) -> None:
+        self.active_flow = None
+        self.flow_state = None
 
 
 class SessionStore:
-    def __init__(self):
+    def __init__(self) -> None:
         self._sessions: dict[str, Session] = {}
-        self._lock = threading.Lock()
+        self._lock: threading.Lock = threading.Lock()
 
     def get(self, phone: str) -> Session:
         with self._lock:
