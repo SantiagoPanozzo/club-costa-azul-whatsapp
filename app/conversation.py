@@ -29,6 +29,16 @@ MENU_OPTIONS: list[dict[str, str]] = [
         "title": "Actividades",
         "description": "Ver tus actividades e inscribirte",
     },
+    {
+        "id": "payments",
+        "title": "Mis Pagos",
+        "description": "Ver cuotas y enviar comprobantes",
+    },
+    {
+        "id": "reservations",
+        "title": "Mis Reservas",
+        "description": "Reservar espacios y ver reservas",
+    },
 ]
 
 GLOBAL_KEYWORDS: dict[str, str] = {
