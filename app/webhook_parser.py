@@ -45,6 +45,10 @@ class IncomingMessage:
     type: str
     text: Optional[str] = None
     interactive_id: Optional[str] = None
+    media_id: Optional[str] = None
+    mime_type: Optional[str] = None
+    filename: Optional[str] = None
+    caption: Optional[str] = None
 
 
 def extract_messages(payload: dict) -> list[IncomingMessage]:
@@ -71,6 +75,10 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
                 msg_type = msg.get("type", "unknown")
                 text = None
                 interactive_id = None
+                media_id = None
+                mime_type = None
+                filename = None
+                caption = None
 
                 if msg_type == "text":
                     text = msg.get("text", {}).get("body")
@@ -81,6 +89,17 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
                         interactive_id = interactive.get("list_reply", {}).get("id")
                     elif itype == "button_reply":
                         interactive_id = interactive.get("button_reply", {}).get("id")
+                elif msg_type == "image":
+                    image = msg.get("image", {})
+                    media_id = image.get("id")
+                    mime_type = image.get("mime_type")
+                    caption = image.get("caption")
+                elif msg_type == "document":
+                    document = msg.get("document", {})
+                    media_id = document.get("id")
+                    mime_type = document.get("mime_type")
+                    filename = document.get("filename")
+                    caption = document.get("caption")
 
                 results.append(
                     IncomingMessage(
@@ -88,6 +107,10 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
                         type=msg_type,
                         text=text,
                         interactive_id=interactive_id,
+                        media_id=media_id,
+                        mime_type=mime_type,
+                        filename=filename,
+                        caption=caption,
                     )
                 )
 

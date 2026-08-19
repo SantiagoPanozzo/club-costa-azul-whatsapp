@@ -119,4 +119,32 @@ class WhatsAppClient:
         )
 
 
+    async def download_media(self, media_id: str) -> tuple[bytes, str]:
+        """Download media from WhatsApp by media ID. Returns (file_bytes, mime_type)."""
+        graph_url = f"https://graph.facebook.com/{settings.whatsapp_api_version}/{media_id}"
+        try:
+            resp = await self._client.get(graph_url)
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.error("Error fetching media metadata for %s: %s", media_id, exc)
+            raise
+
+        data = resp.json()
+        url = data["url"]
+        mime = data.get("mime_type", "application/octet-stream")
+
+        try:
+            file_resp = await self._client.get(url)
+            file_resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.error("Error downloading media file for %s: %s", media_id, exc)
+            raise
+
+        max_size = 5 * 1024 * 1024
+        if len(file_resp.content) > max_size:
+            raise ValueError(f"Media file exceeds 5 MB limit ({len(file_resp.content)} bytes)")
+
+        return file_resp.content, mime
+
+
 whatsapp_client = WhatsAppClient()
