@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from .. import services_client as svc
-from ..services_client import ServicesAPIError
+from ..services_client import ConflictError, ServicesAPIError
 from ..state import Session
 from ..webhook_parser import IncomingMessage
 from ..whatsapp_client import whatsapp_client
@@ -70,7 +70,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
             for i in activas:
                 act = actividades_by_id.get(i.get("actividadId"))
                 if act:
-                    lines.append(f"- {act['nombre']} ({act['diasHorario']})")
+                    lines.append(f"- {act['nombre']}")
                 else:
                     lines.append("- Actividad (detalle no disponible)")
             text = "Ya estás inscripto/a en:\n\n" + "\n".join(lines)
@@ -100,7 +100,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
             {
                 "id": f"{ACTIVITY_PREFIX}{a['id']}",
                 "title": str(a["nombre"]),
-                "description": f"{a['diasHorario']} - ${a['costo']:.0f}",
+                "description": f"${a['costo']:.0f} - {(a.get('descripcion') or '')[:50]}",
             }
             for a in disponibles[:10]
         ]
@@ -131,11 +131,21 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
 
         state.selected_activity = activity
         state.step = ActivitiesStep.AWAITING_CONFIRM
+
+        horario = ""
+        try:
+            instancias = await svc.services_client.get_instancias_actividad(str(activity["id"]))
+            if instancias:
+                inst = instancias[0]
+                horario = f"\nHorario: {inst['horaInicio'][:5]}-{inst['horaFin'][:5]}"
+        except ServicesAPIError:
+            pass
+
         await whatsapp_client.send_buttons(
             phone,
             body=(
-                f"¿Confirmás tu inscripción a *{activity['nombre']}*?\n"
-                f"Horario: {activity['diasHorario']}\n"
+                f"¿Confirmás tu inscripción a *{activity['nombre']}*?"
+                f"{horario}\n"
                 f"Costo: ${float(str(activity['costo'])):.0f}"
             ),
             buttons=[(CONFIRM_YES, "Confirmar"), (CONFIRM_NO, "Cancelar")],
@@ -152,6 +162,9 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
             assert socio is not None
             try:
                 await svc.services_client.post_inscripcion(str(socio["id"]), str(activity["id"]))
+            except ConflictError as exc:
+                await whatsapp_client.send_text(phone, exc.detail)
+                return FlowResult.DONE
             except ServicesAPIError:
                 logger.warning(
                     "Error creating inscription for socio %s to activity %s",
