@@ -1,4 +1,5 @@
 """Environment-based configuration."""
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 

@@ -31,7 +31,6 @@ class ActivitiesState:
 
 
 class ActivitiesFlow(BaseFlow[ActivitiesState]):
-
     def create_state(self) -> ActivitiesState:
         return ActivitiesState()
 
@@ -50,9 +49,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
 
         return FlowResult.DONE
 
-    async def _show_activities(
-        self, phone: str, session: Session, state: ActivitiesState
-    ) -> None:
+    async def _show_activities(self, phone: str, session: Session, state: ActivitiesState) -> None:
         socio = session.socio
         assert socio is not None
         socio_id = socio["id"]
@@ -85,9 +82,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
         disponibles = [
             a
             for a in actividades
-            if a.get("estado") == "Activa"
-            and a.get("cupoDisponible", 0) > 0
-            and a["id"] not in inscriptas_ids
+            if a.get("estado") == "Activa" and a.get("cupoDisponible", 0) > 0 and a["id"] not in inscriptas_ids
         ]
 
         if not disponibles:
@@ -156,9 +151,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
             socio = session.socio
             assert socio is not None
             try:
-                await svc.services_client.post_inscripcion(
-                    str(socio["id"]), str(activity["id"])
-                )
+                await svc.services_client.post_inscripcion(str(socio["id"]), str(activity["id"]))
             except ServicesAPIError:
                 logger.warning(
                     "Error creating inscription for socio %s to activity %s",
@@ -168,9 +161,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
                 traceback.print_exc()
                 await whatsapp_client.send_text(phone, GENERIC_ERROR)
                 return FlowResult.DONE
-            await whatsapp_client.send_text(
-                phone, f"¡Listo! Quedaste inscripto/a en *{activity['nombre']}*."
-            )
+            await whatsapp_client.send_text(phone, f"¡Listo! Quedaste inscripto/a en *{activity['nombre']}*.")
             return FlowResult.DONE
 
         if msg.interactive_id == CONFIRM_NO:

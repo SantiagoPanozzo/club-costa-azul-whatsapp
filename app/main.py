@@ -1,4 +1,5 @@
 """FastAPI entrypoint: receives the forwarded Meta webhook payload and routes it."""
+
 import logging
 
 from fastapi import FastAPI, Request

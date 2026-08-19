@@ -37,9 +37,11 @@ User message
 from dataclasses import dataclass
 from enum import StrEnum
 
+
 class MyFlowStep(StrEnum):
     FIRST_STEP = "first_step"
     AWAITING_CONFIRM = "awaiting_confirm"
+
 
 @dataclass
 class MyFlowState:
@@ -57,8 +59,8 @@ from .base import BaseFlow, FlowResult
 from ..state import Session
 from ..webhook_parser import IncomingMessage
 
-class MyFlow(BaseFlow[MyFlowState]):
 
+class MyFlow(BaseFlow[MyFlowState]):
     def create_state(self) -> MyFlowState:
         return MyFlowState()
 
@@ -103,12 +105,12 @@ FLOW_REGISTRY: dict[str, BaseFlow] = {
 # app/conversation.py
 MENU_OPTIONS: list[dict[str, str]] = [
     {
-        "id": "activities",       # must match FLOW_REGISTRY key
+        "id": "activities",  # must match FLOW_REGISTRY key
         "title": "Actividades",
         "description": "Ver tus actividades e inscribirte",
     },
     {
-        "id": "my_flow",          # must match FLOW_REGISTRY key
+        "id": "my_flow",  # must match FLOW_REGISTRY key
         "title": "Mi Flujo",
         "description": "Descripción corta del flujo",
     },
