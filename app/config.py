@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     # Club Costa Azul services API (socios / actividades / inscripciones)
     services_api_base_url: str
 
+    # Service account for authenticated API calls (reservas, etc.)
+    bot_service_ci: str = ""
+    bot_service_password: str = ""
+
     log_level: str = "INFO"
 
 
