@@ -101,7 +101,7 @@ async def _sign_in(phone: str, session: Session, incoming: IncomingMessage) -> N
     saludo = f"¡Hola, {nombre}!" if nombre else "¡Hola!"
     await whatsapp_client.send_text(
         phone,
-        f"{saludo} Bienvenido/a al bot del Club Costa Azul. Te ayudo a gestionar tus actividades.",
+        f"{saludo} Bienvenido/a al bot del Club Costa Azul.",
     )
     await _send_main_menu(phone, session)
 

@@ -142,7 +142,7 @@ class ReservationsFlow(BaseFlow[ReservationsState]):
         await whatsapp_client.send_text(phone, "\n".join(lines))
 
         min_cancel_date = (today + timedelta(days=1)).isoformat()
-        cancelables = [r for r in activas if r.get("fecha", "") > min_cancel_date]
+        cancelables = [r for r in activas if r.get("fecha", "") >= min_cancel_date]
 
         if not cancelables:
             await whatsapp_client.send_text(
