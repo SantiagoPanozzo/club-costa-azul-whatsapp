@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     # Club Costa Azul services API (socios / actividades / inscripciones)
     services_api_base_url: str
 
+    # MongoDB (message storage)
+    mongodb_url: str
+
     log_level: str = "INFO"
 
 
