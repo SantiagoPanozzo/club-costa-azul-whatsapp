@@ -45,6 +45,10 @@ class IncomingMessage:
     type: str
     text: Optional[str] = None
     interactive_id: Optional[str] = None
+    wamid: Optional[str] = None
+    timestamp: Optional[str] = None
+    contact_name: Optional[str] = None
+    interactive_title: Optional[str] = None
 
 
 def extract_messages(payload: dict) -> list[IncomingMessage]:
@@ -55,22 +59,23 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
             value = change.get("value", {})
             messages = value.get("messages")
             if not messages:
-                # e.g. "statuses" (delivery/read receipts) -> nothing to do
                 continue
+
+            contacts = value.get("contacts", [])
+            contact_name = None
+            if contacts:
+                contact_name = contacts[0].get("profile", {}).get("name")
 
             for msg in messages:
                 phone = msg.get("from")
                 if not phone:
-                    # Defensive case: WhatsApp Cloud API always includes "from" for
-                    # genuine user messages, but we can't identify or reply to a
-                    # user without a phone number, so we skip and log instead of
-                    # raising. (See README for the "consent" design note.)
                     logger.warning("Skipping incoming message with no phone number: %s", msg)
                     continue
 
                 msg_type = msg.get("type", "unknown")
                 text = None
                 interactive_id = None
+                interactive_title = None
 
                 if msg_type == "text":
                     text = msg.get("text", {}).get("body")
@@ -78,9 +83,13 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
                     interactive = msg.get("interactive", {})
                     itype = interactive.get("type")
                     if itype == "list_reply":
-                        interactive_id = interactive.get("list_reply", {}).get("id")
+                        reply = interactive.get("list_reply", {})
+                        interactive_id = reply.get("id")
+                        interactive_title = reply.get("title")
                     elif itype == "button_reply":
-                        interactive_id = interactive.get("button_reply", {}).get("id")
+                        reply = interactive.get("button_reply", {})
+                        interactive_id = reply.get("id")
+                        interactive_title = reply.get("title")
 
                 results.append(
                     IncomingMessage(
@@ -88,6 +97,10 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
                         type=msg_type,
                         text=text,
                         interactive_id=interactive_id,
+                        wamid=msg.get("id"),
+                        timestamp=msg.get("timestamp"),
+                        contact_name=contact_name,
+                        interactive_title=interactive_title,
                     )
                 )
 

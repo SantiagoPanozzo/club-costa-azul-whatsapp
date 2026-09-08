@@ -32,13 +32,14 @@ class WhatsAppClient:
     async def aclose(self):
         await self._client.aclose()
 
-    async def _send(self, payload: dict) -> None:
+    async def _send(self, payload: dict) -> str | None:
+        """Send a message and return the wamid on success, None on error."""
         try:
             resp = await self._client.post(self._url, json=payload)
             resp.raise_for_status()
+            data = resp.json()
+            return data.get("messages", [{}])[0].get("id")
         except httpx.HTTPError as exc:
-            # Sending failures are logged, not raised: we generally have nothing
-            # better to do than retry on the next user message.
             body = getattr(exc, "response", None)
             body_text = body.text if body is not None else ""
             logger.error(
@@ -47,9 +48,10 @@ class WhatsAppClient:
                 body_text,
                 payload,
             )
+            return None
 
-    async def send_text(self, to: str, body: str) -> None:
-        await self._send(
+    async def send_text(self, to: str, body: str) -> str | None:
+        return await self._send(
             {
                 "messaging_product": "whatsapp",
                 "to": to,
@@ -58,9 +60,9 @@ class WhatsAppClient:
             }
         )
 
-    async def send_buttons(self, to: str, body: str, buttons: list[tuple[str, str]]) -> None:
+    async def send_buttons(self, to: str, body: str, buttons: list[tuple[str, str]]) -> str | None:
         """buttons: list of (id, title). Max 3 buttons, title max 20 chars (WhatsApp limit)."""
-        await self._send(
+        return await self._send(
             {
                 "messaging_product": "whatsapp",
                 "to": to,
@@ -88,9 +90,9 @@ class WhatsAppClient:
         button_text: str,
         rows: list[dict],
         section_title: str = "Opciones",
-    ) -> None:
+    ) -> str | None:
         """rows: list of {"id": str, "title": str, "description": str}. Max 10 rows (WhatsApp limit)."""
-        await self._send(
+        return await self._send(
             {
                 "messaging_product": "whatsapp",
                 "to": to,

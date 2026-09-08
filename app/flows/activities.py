@@ -6,8 +6,8 @@ from enum import StrEnum
 from .. import services_client as svc
 from ..services_client import ServicesAPIError
 from ..state import Session
+from ..storing_client import storing_client as whatsapp_client
 from ..webhook_parser import IncomingMessage
-from ..whatsapp_client import whatsapp_client
 from .base import BaseFlow, FlowResult
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
         except ServicesAPIError:
             logger.warning("Error fetching activities or inscriptions for socio %s", socio_id)
             traceback.print_exc()
-            await whatsapp_client.send_text(phone, GENERIC_ERROR)
+            await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
             return
 
         actividades_by_id: dict[object, dict[str, object]] = {a["id"]: a for a in actividades}
@@ -76,7 +76,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
             text = "Ya estás inscripto/a en:\n\n" + "\n".join(lines)
         else:
             text = "Todavía no estás inscripto/a en ninguna actividad."
-        await whatsapp_client.send_text(phone, text)
+        await whatsapp_client.send_text(phone, text, session=session)
 
         inscriptas_ids = {i.get("actividadId") for i in activas}
         disponibles = [
@@ -87,7 +87,9 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
 
         if not disponibles:
             await whatsapp_client.send_text(
-                phone, "No hay otras actividades disponibles para inscribirte en este momento."
+                phone,
+                "No hay otras actividades disponibles para inscribirte en este momento.",
+                session=session,
             )
             session.end_flow()
             return
@@ -110,6 +112,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
             button_text="Ver actividades",
             rows=rows,
             section_title="Actividades disponibles",
+            session=session,
         )
 
     async def _handle_choice(
@@ -117,14 +120,16 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
     ) -> FlowResult:
         iid = msg.interactive_id or ""
         if not iid.startswith(ACTIVITY_PREFIX):
-            await whatsapp_client.send_text(phone, "Por favor, elegí una actividad de la lista.")
+            await whatsapp_client.send_text(phone, "Por favor, elegí una actividad de la lista.", session=session)
             return FlowResult.CONTINUE
 
         activity_id = iid[len(ACTIVITY_PREFIX) :]
         activity = state.available_activities.get(activity_id)
         if not activity:
             await whatsapp_client.send_text(
-                phone, "Esa actividad ya no está disponible. Te muestro la lista actualizada."
+                phone,
+                "Esa actividad ya no está disponible. Te muestro la lista actualizada.",
+                session=session,
             )
             await self._show_activities(phone, session, state)
             return FlowResult.CONTINUE
@@ -139,6 +144,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
                 f"Costo: ${float(str(activity['costo'])):.0f}"
             ),
             buttons=[(CONFIRM_YES, "Confirmar"), (CONFIRM_NO, "Cancelar")],
+            session=session,
         )
         return FlowResult.CONTINUE
 
@@ -159,14 +165,16 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
                     activity["id"],
                 )
                 traceback.print_exc()
-                await whatsapp_client.send_text(phone, GENERIC_ERROR)
+                await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
                 return FlowResult.DONE
-            await whatsapp_client.send_text(phone, f"¡Listo! Quedaste inscripto/a en *{activity['nombre']}*.")
+            await whatsapp_client.send_text(
+                phone, f"¡Listo! Quedaste inscripto/a en *{activity['nombre']}*.", session=session
+            )
             return FlowResult.DONE
 
         if msg.interactive_id == CONFIRM_NO:
-            await whatsapp_client.send_text(phone, "Inscripción cancelada.")
+            await whatsapp_client.send_text(phone, "Inscripción cancelada.", session=session)
             return FlowResult.DONE
 
-        await whatsapp_client.send_text(phone, "Por favor, tocá Confirmar o Cancelar.")
+        await whatsapp_client.send_text(phone, "Por favor, tocá Confirmar o Cancelar.", session=session)
         return FlowResult.CONTINUE

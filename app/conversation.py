@@ -8,12 +8,13 @@ and dispatches to the active flow.
 import logging
 import traceback
 
+from . import message_store
 from . import services_client as svc
 from .flows import FLOW_REGISTRY, FlowResult
 from .services_client import ServicesAPIError
 from .state import Session, sessions
+from .storing_client import storing_client as whatsapp_client
 from .webhook_parser import IncomingMessage
-from .whatsapp_client import whatsapp_client
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ GLOBAL_KEYWORDS: dict[str, str] = {
 async def handle_message(incoming: IncomingMessage) -> None:
     phone = incoming.phone
     session = sessions.get(phone)
+
+    await message_store.store_incoming(incoming, session)
 
     if session.socio is None:
         await _sign_in(phone, session, incoming)
@@ -79,11 +82,11 @@ async def _sign_in(phone: str, session: Session, incoming: IncomingMessage) -> N
     except ServicesAPIError:
         logger.warning("Error looking up socio for phone %s", phone)
         traceback.print_exc()
-        await whatsapp_client.send_text(phone, GENERIC_ERROR)
+        await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
         return
 
     if socio is None:
-        await whatsapp_client.send_text(phone, NOT_REGISTERED)
+        await whatsapp_client.send_text(phone, NOT_REGISTERED, session=session)
         return
 
     session.socio = socio
@@ -92,6 +95,7 @@ async def _sign_in(phone: str, session: Session, incoming: IncomingMessage) -> N
     await whatsapp_client.send_text(
         phone,
         f"{saludo} Bienvenido/a al bot del Club Costa Azul. Te ayudo a gestionar tus actividades.",
+        session=session,
     )
     await _send_main_menu(phone, session)
 
@@ -104,6 +108,7 @@ async def _send_main_menu(phone: str, session: Session) -> None:
         button_text="Ver opciones",
         rows=MENU_OPTIONS,
         section_title="Menú",
+        session=session,
     )
 
 
