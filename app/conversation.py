@@ -30,6 +30,31 @@ MENU_OPTIONS: list[dict[str, str]] = [
         "title": "Actividades",
         "description": "Ver tus actividades e inscribirte",
     },
+    {
+        "id": "cuotas",
+        "title": "Cuotas y pagos",
+        "description": "Ver estado de tus cuotas",
+    },
+    {
+        "id": "reservas",
+        "title": "Reservas",
+        "description": "Reservar espacios del club",
+    },
+    {
+        "id": "eventos",
+        "title": "Eventos",
+        "description": "Ver eventos e inscribirte",
+    },
+    {
+        "id": "datos_personales",
+        "title": "Datos personales",
+        "description": "Consultar tus datos",
+    },
+    {
+        "id": "comunicados",
+        "title": "Comunicados",
+        "description": "Novedades y comunicados",
+    },
 ]
 
 GLOBAL_KEYWORDS: dict[str, str] = {
