@@ -48,6 +48,7 @@ Required env vars:
 | `WHATSAPP_PHONE_NUMBER_ID` | Phone number id used to send messages |
 | `WHATSAPP_API_VERSION` | Graph API version, default `v20.0` |
 | `SERVICES_API_BASE_URL` | Base URL of the Club Costa Azul services API |
+| `BOT_API_KEY` | Optional `X-Api-Key` credential for protected bot API calls |
 
 ## Run locally
 
