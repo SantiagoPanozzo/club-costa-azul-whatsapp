@@ -29,10 +29,6 @@ class ServicesClient:
     async def aclose(self):
         await self._client.aclose()
 
-    @staticmethod
-    def _bot_headers() -> dict[str, str]:
-        return {"X-Api-Key": settings.bot_api_key} if settings.bot_api_key else {}
-
     async def get_socio_by_whatsapp(self, number: str) -> dict | None:
         """Returns the socio dict, or None if no socio is registered with that number."""
         try:
@@ -64,7 +60,7 @@ class ServicesClient:
         try:
             resp = await self._client.get(
                 f"/socios/{socio_id}/inscripciones",
-                headers=self._bot_headers(),
+                headers=self._auth_headers(),
             )
         except httpx.HTTPError as exc:
             logger.error("Network error fetching inscripciones for %s: %s", socio_id, exc)
@@ -81,7 +77,7 @@ class ServicesClient:
         try:
             resp = await self._client.get(
                 f"/socios/{socio_id}/cuotas",
-                headers=self._bot_headers(),
+                headers=self._auth_headers(),
             )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
@@ -94,7 +90,7 @@ class ServicesClient:
             resp = await self._client.post(
                 "/inscripciones",
                 json={"socioId": socio_id, "actividadId": actividad_id},
-                headers=self._bot_headers(),
+                headers=self._auth_headers(),
             )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
@@ -120,15 +116,6 @@ class ServicesClient:
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
             logger.error("Services API error fetching socio detail for %s: %s", socio_id, exc)
-            raise ServicesAPIError(str(exc)) from exc
-        return resp.json()
-
-    async def get_cuotas_socio(self, socio_id: str) -> list[dict]:
-        try:
-            resp = await self._client.get(f"/socios/{socio_id}/cuotas")
-            resp.raise_for_status()
-        except httpx.HTTPError as exc:
-            logger.error("Error fetching cuotas for socio %s: %s", socio_id, exc)
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
