@@ -13,6 +13,10 @@ class ServicesAPIError(Exception):
     """Raised when the services API can't be reached or returns an unexpected error."""
 
 
+class ServicesAPIConflict(ServicesAPIError):
+    """Raised on 409 Conflict — the API rejected the operation with a user-facing message."""
+
+
 class ServicesClient:
     def __init__(self):
         self._client = httpx.AsyncClient(base_url=settings.services_api_base_url, timeout=10.0)
@@ -85,6 +89,22 @@ class ServicesClient:
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
+    async def get_socio_detalle(self, socio_id: str) -> dict | None:
+        try:
+            resp = await self._client.get(f"/socios/{socio_id}", headers=self._auth_headers())
+        except httpx.HTTPError as exc:
+            logger.error("Error fetching socio detail for %s: %s", socio_id, exc)
+            raise ServicesAPIError(str(exc)) from exc
+
+        if resp.status_code == 404:
+            return None
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error("Services API error fetching socio detail for %s: %s", socio_id, exc)
+            raise ServicesAPIError(str(exc)) from exc
+        return resp.json()
+
     async def get_cuotas_socio(self, socio_id: str) -> list[dict]:
         try:
             resp = await self._client.get(f"/socios/{socio_id}/cuotas")
@@ -116,9 +136,7 @@ class ServicesClient:
 
     async def get_reservas_socio(self, socio_id: str) -> list[dict]:
         try:
-            resp = await self._client.get(
-                f"/socios/{socio_id}/reservas", headers=self._auth_headers()
-            )
+            resp = await self._client.get(f"/socios/{socio_id}/reservas", headers=self._auth_headers())
         except httpx.HTTPError as exc:
             logger.error("Error fetching reservas for socio %s: %s", socio_id, exc)
             raise ServicesAPIError(str(exc)) from exc
@@ -139,20 +157,36 @@ class ServicesClient:
                 json={"socioId": socio_id, "espacioId": espacio_id, "fecha": fecha},
                 headers=self._auth_headers(),
             )
-            resp.raise_for_status()
         except httpx.HTTPError as exc:
             logger.error(
                 "Error creating reserva (socio=%s, espacio=%s, fecha=%s): %s",
-                socio_id, espacio_id, fecha, exc,
+                socio_id,
+                espacio_id,
+                fecha,
+                exc,
+            )
+            raise ServicesAPIError(str(exc)) from exc
+
+        if resp.status_code == 409:
+            body = resp.json()
+            raise ServicesAPIConflict(body.get("mensaje", "El espacio ya está reservado para esa fecha."))
+
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "Services API error creating reserva (socio=%s, espacio=%s, fecha=%s): %s",
+                socio_id,
+                espacio_id,
+                fecha,
+                exc,
             )
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
     async def delete_reserva(self, reserva_id: str) -> dict:
         try:
-            resp = await self._client.delete(
-                f"/reservas/{reserva_id}/admin", headers=self._auth_headers()
-            )
+            resp = await self._client.delete(f"/reservas/{reserva_id}/admin", headers=self._auth_headers())
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             logger.error("Error deleting reserva %s: %s", reserva_id, exc)
@@ -168,6 +202,22 @@ class ServicesClient:
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
+    async def get_inscripciones_evento_socio(self, socio_id: str) -> list[dict]:
+        try:
+            resp = await self._client.get(f"/socios/{socio_id}/evento-inscripciones", headers=self._auth_headers())
+        except httpx.HTTPError as exc:
+            logger.error("Error fetching evento inscriptions for socio %s: %s", socio_id, exc)
+            raise ServicesAPIError(str(exc)) from exc
+
+        if resp.status_code == 404:
+            return []
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error("Services API error fetching evento inscriptions for %s: %s", socio_id, exc)
+            raise ServicesAPIError(str(exc)) from exc
+        return resp.json()
+
     async def post_inscripcion_evento(self, evento_id: str, socio_id: str) -> dict:
         try:
             resp = await self._client.post(
@@ -175,11 +225,27 @@ class ServicesClient:
                 json={"socioId": socio_id},
                 headers=self._auth_headers(),
             )
-            resp.raise_for_status()
         except httpx.HTTPError as exc:
             logger.error(
                 "Error creating evento inscription (socio=%s, evento=%s): %s",
-                socio_id, evento_id, exc,
+                socio_id,
+                evento_id,
+                exc,
+            )
+            raise ServicesAPIError(str(exc)) from exc
+
+        if resp.status_code == 409:
+            body = resp.json()
+            raise ServicesAPIConflict(body.get("mensaje", "Ya estás inscripto/a en este evento."))
+
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "Services API error creating evento inscription (socio=%s, evento=%s): %s",
+                socio_id,
+                evento_id,
+                exc,
             )
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
