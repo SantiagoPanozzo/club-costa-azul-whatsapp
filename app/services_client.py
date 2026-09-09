@@ -58,17 +58,30 @@ class ServicesClient:
 
     async def get_inscripciones_socio(self, socio_id: str) -> list[dict]:
         try:
-            resp = await self._client.get(f"/socio/{socio_id}/inscripciones")
+            resp = await self._client.get(
+                f"/socios/{socio_id}/inscripciones",
+                headers=self._auth_headers(),
+            )
         except httpx.HTTPError as exc:
             logger.error("Network error fetching inscripciones for %s: %s", socio_id, exc)
             raise ServicesAPIError(str(exc)) from exc
 
-        if resp.status_code == 404:
-            return []
         try:
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
             logger.error("Services API error fetching inscripciones for %s: %s", socio_id, exc)
+            raise ServicesAPIError(str(exc)) from exc
+        return resp.json()
+
+    async def get_cuotas_socio(self, socio_id: str) -> list[dict]:
+        try:
+            resp = await self._client.get(
+                f"/socios/{socio_id}/cuotas",
+                headers=self._auth_headers(),
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.error("Error fetching cuotas for socio %s: %s", socio_id, exc)
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
@@ -77,6 +90,7 @@ class ServicesClient:
             resp = await self._client.post(
                 "/inscripciones",
                 json={"socioId": socio_id, "actividadId": actividad_id},
+                headers=self._auth_headers(),
             )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
@@ -102,15 +116,6 @@ class ServicesClient:
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
             logger.error("Services API error fetching socio detail for %s: %s", socio_id, exc)
-            raise ServicesAPIError(str(exc)) from exc
-        return resp.json()
-
-    async def get_cuotas_socio(self, socio_id: str) -> list[dict]:
-        try:
-            resp = await self._client.get(f"/socios/{socio_id}/cuotas")
-            resp.raise_for_status()
-        except httpx.HTTPError as exc:
-            logger.error("Error fetching cuotas for socio %s: %s", socio_id, exc)
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 

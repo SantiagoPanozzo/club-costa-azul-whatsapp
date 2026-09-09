@@ -40,7 +40,7 @@ This service does **not** handle Meta webhook verification or receive Meta's web
 - **`app/flows/base.py`** — `BaseFlow[T]` ABC (generic over the flow's state dataclass) and `FlowResult` StrEnum. All flows subclass this.
 - **`app/flows/activities.py`** — Activity sign-up flow. `ActivitiesStep` StrEnum, `ActivitiesState` dataclass, `ActivitiesFlow` implementation.
 - **`app/flows/__init__.py`** — `FLOW_REGISTRY` mapping menu item IDs to flow instances. Adding a flow = one entry here + one `MENU_OPTIONS` row in `conversation.py`.
-- **`app/services_client.py`** — Async `httpx` client wrapping the Club Costa Azul API. Endpoints: `/socios/by-whatsapp/{number}`, `/actividades`, `/socio/{id}/inscripciones`, `/inscripciones`. All errors raise `ServicesAPIError`.
+- **`app/services_client.py`** — Async `httpx` client wrapping the Club Costa Azul API. Endpoints include `/socios/by-whatsapp/{number}`, `/actividades`, `/socios/{id}/inscripciones`, `/socios/{id}/cuotas`, and `/inscripciones`. Protected bot calls send `X-Api-Key` when `BOT_API_KEY` is configured; errors raise `ServicesAPIError`.
 - **`app/whatsapp_client.py`** — Async `httpx` client for the Meta Graph API. Supports `send_text`, `send_buttons` (max 3), and `send_list` (max 10 rows). Sending failures are logged, not raised.
 - **`app/webhook_parser.py`** — Parses raw Meta payload into `IncomingMessage` dataclasses. Handles `text` and `interactive` (list_reply, button_reply) message types.
 - **`app/config.py`** — `pydantic-settings` config loaded from `.env`.
@@ -63,7 +63,7 @@ All user-facing messages are in Spanish. The bot auto-identifies the user by Wha
 
 ## Environment Variables
 
-Copy `.env.example` to `.env`. Required vars: `WHATSAPP_API_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `SERVICES_API_BASE_URL`. Optional: `WHATSAPP_API_VERSION` (default `v20.0`), `LOG_LEVEL` (default `INFO`).
+Copy `.env.example` to `.env`. Required vars: `WHATSAPP_API_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `SERVICES_API_BASE_URL`. Optional: `BOT_API_KEY`, `WHATSAPP_API_VERSION` (default `v20.0`), `LOG_LEVEL` (default `INFO`).
 
 ## Deployment
 
