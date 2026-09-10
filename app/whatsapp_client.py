@@ -9,10 +9,14 @@ from .config import settings
 logger = logging.getLogger(__name__)
 
 
+class WhatsAppDeliveryError(Exception):
+    """Raised when Meta does not accept an outbound message."""
+
+
 def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
-    logger.warning("Truncating text to %d chars (was %d): %r", limit, len(text), text)
+    logger.warning("Truncating WhatsApp field to %d chars (was %d)", limit, len(text))
     return text[: limit - 1].rstrip() + "…"
 
 
@@ -32,25 +36,28 @@ class WhatsAppClient:
     async def aclose(self):
         await self._client.aclose()
 
-    async def _send(self, payload: dict) -> str | None:
-        """Send a message and return the wamid on success, None on error."""
+    async def _send(self, payload: dict) -> str:
+        """Send a message and return its WhatsApp message ID."""
         try:
             resp = await self._client.post(self._url, json=payload)
             resp.raise_for_status()
             data = resp.json()
-            return data.get("messages", [{}])[0].get("id")
+            wamid = data.get("messages", [{}])[0].get("id")
+            if not wamid:
+                raise WhatsAppDeliveryError("Meta response did not include a message ID")
+            return wamid
         except httpx.HTTPError as exc:
-            body = getattr(exc, "response", None)
-            body_text = body.text if body is not None else ""
+            response = getattr(exc, "response", None)
+            status = response.status_code if response is not None else None
             logger.error(
-                "Error sending WhatsApp message: %s | response=%s | payload=%s",
-                exc,
-                body_text,
-                payload,
+                "Meta rejected outbound WhatsApp message type=%s status=%s error=%s",
+                payload.get("type", "unknown"),
+                status,
+                type(exc).__name__,
             )
-            return None
+            raise WhatsAppDeliveryError(str(exc)) from exc
 
-    async def send_text(self, to: str, body: str) -> str | None:
+    async def send_text(self, to: str, body: str) -> str:
         return await self._send(
             {
                 "messaging_product": "whatsapp",
@@ -60,7 +67,7 @@ class WhatsAppClient:
             }
         )
 
-    async def send_buttons(self, to: str, body: str, buttons: list[tuple[str, str]]) -> str | None:
+    async def send_buttons(self, to: str, body: str, buttons: list[tuple[str, str]]) -> str:
         """buttons: list of (id, title). Max 3 buttons, title max 20 chars (WhatsApp limit)."""
         return await self._send(
             {
@@ -90,7 +97,7 @@ class WhatsAppClient:
         button_text: str,
         rows: list[dict],
         section_title: str = "Opciones",
-    ) -> str | None:
+    ) -> str:
         """rows: list of {"id": str, "title": str, "description": str}. Max 10 rows (WhatsApp limit)."""
         return await self._send(
             {

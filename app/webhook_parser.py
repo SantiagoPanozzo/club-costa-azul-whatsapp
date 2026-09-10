@@ -69,7 +69,9 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
             for msg in messages:
                 phone = msg.get("from")
                 if not phone:
-                    logger.warning("Skipping incoming message with no phone number: %s", msg)
+                    logger.warning(
+                        "Skipping incoming message with no phone number; type=%s", msg.get("type", "unknown")
+                    )
                     continue
 
                 msg_type = msg.get("type", "unknown")

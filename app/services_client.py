@@ -5,6 +5,7 @@ import logging
 import httpx
 
 from .config import settings
+from .privacy import log_reference
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +33,16 @@ class ServicesClient:
     async def get_socio_by_whatsapp(self, number: str) -> dict | None:
         """Returns the socio dict, or None if no socio is registered with that number."""
         try:
-            print(f"Fetching from {settings.services_api_base_url}/socios/by-whatsapp/{number}")
-            resp = await self._client.get(f"/socios/by-whatsapp/{number}")
+            resp = await self._client.get(
+                f"/socios/by-whatsapp/{number}",
+                headers=self._auth_headers(),
+            )
         except httpx.HTTPError as exc:
-            logger.error("Network error fetching socio for %s: %s", number, exc)
+            logger.error(
+                "Network error fetching member_ref=%s error=%s",
+                log_reference(number),
+                type(exc).__name__,
+            )
             raise ServicesAPIError(str(exc)) from exc
 
         if resp.status_code == 404:
@@ -43,7 +50,11 @@ class ServicesClient:
         try:
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            logger.error("Services API error fetching socio for %s: %s", number, exc)
+            logger.error(
+                "Services API rejected lookup for member_ref=%s status=%s",
+                log_reference(number),
+                exc.response.status_code,
+            )
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
@@ -92,7 +103,6 @@ class ServicesClient:
                 json={"socioId": socio_id, "actividadId": actividad_id},
                 headers=self._auth_headers(),
             )
-            resp.raise_for_status()
         except httpx.HTTPError as exc:
             logger.error(
                 "Error creating inscripcion (socio=%s, actividad=%s): %s",
@@ -100,6 +110,38 @@ class ServicesClient:
                 actividad_id,
                 exc,
             )
+            raise ServicesAPIError(str(exc)) from exc
+        if resp.status_code == 409:
+            body = resp.json()
+            raise ServicesAPIConflict(body.get("mensaje", "No se pudo completar la inscripción."))
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "Services API error creating inscripcion (socio=%s, actividad=%s): %s",
+                socio_id,
+                actividad_id,
+                exc,
+            )
+            raise ServicesAPIError(str(exc)) from exc
+        return resp.json()
+
+    async def delete_inscripcion(self, inscripcion_id: str) -> dict:
+        try:
+            resp = await self._client.delete(
+                f"/inscripciones/{inscripcion_id}",
+                headers=self._auth_headers(),
+            )
+        except httpx.HTTPError as exc:
+            logger.error("Network error cancelling inscription %s: %s", inscripcion_id, exc)
+            raise ServicesAPIError(str(exc)) from exc
+        if resp.status_code in {400, 404, 409}:
+            body = resp.json()
+            raise ServicesAPIConflict(body.get("mensaje", "La inscripción no se pudo cancelar."))
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error("Services API error cancelling inscription %s: %s", inscripcion_id, exc)
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
@@ -155,11 +197,30 @@ class ServicesClient:
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
-    async def post_reserva(self, socio_id: str, espacio_id: str, fecha: str) -> dict:
+    async def post_reserva(
+        self,
+        socio_id: str,
+        espacio_id: str,
+        fecha: str,
+        hora_inicio: str,
+        hora_fin: str,
+        cant_personas: int,
+        motivo: str,
+        notas: str | None,
+    ) -> dict:
         try:
             resp = await self._client.post(
-                "/reservas/admin",
-                json={"socioId": socio_id, "espacioId": espacio_id, "fecha": fecha},
+                "/reservas/bot",
+                json={
+                    "socioId": socio_id,
+                    "espacioId": espacio_id,
+                    "fecha": fecha,
+                    "horaInicio": f"{hora_inicio}:00",
+                    "horaFin": f"{hora_fin}:00",
+                    "cantPersonas": cant_personas,
+                    "motivo": motivo,
+                    "notas": notas,
+                },
                 headers=self._auth_headers(),
             )
         except httpx.HTTPError as exc:
@@ -189,12 +250,23 @@ class ServicesClient:
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
-    async def delete_reserva(self, reserva_id: str) -> dict:
+    async def delete_reserva(self, reserva_id: str, socio_id: str) -> dict:
         try:
-            resp = await self._client.delete(f"/reservas/{reserva_id}/admin", headers=self._auth_headers())
-            resp.raise_for_status()
+            resp = await self._client.delete(
+                f"/reservas/{reserva_id}/bot",
+                params={"socioId": socio_id},
+                headers=self._auth_headers(),
+            )
         except httpx.HTTPError as exc:
             logger.error("Error deleting reserva %s: %s", reserva_id, exc)
+            raise ServicesAPIError(str(exc)) from exc
+        if resp.status_code in {400, 404, 409}:
+            body = resp.json()
+            raise ServicesAPIConflict(body.get("mensaje", "La reserva no se pudo cancelar."))
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error("Services API error deleting reserva %s: %s", reserva_id, exc)
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
@@ -252,6 +324,34 @@ class ServicesClient:
                 evento_id,
                 exc,
             )
+            raise ServicesAPIError(str(exc)) from exc
+        return resp.json()
+
+    async def delete_inscripcion_evento(self, evento_id: str, inscripcion_id: str) -> dict:
+        try:
+            resp = await self._client.delete(
+                f"/eventos/{evento_id}/inscripciones/{inscripcion_id}",
+                headers=self._auth_headers(),
+            )
+        except httpx.HTTPError as exc:
+            logger.error("Network error withdrawing event inscription %s: %s", inscripcion_id, exc)
+            raise ServicesAPIError(str(exc)) from exc
+        if resp.status_code in {400, 404, 409}:
+            body = resp.json()
+            raise ServicesAPIConflict(body.get("mensaje", "La inscripción no se pudo cancelar."))
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error("Services API error withdrawing event inscription %s: %s", inscripcion_id, exc)
+            raise ServicesAPIError(str(exc)) from exc
+        return resp.json()
+
+    async def get_noticias_publicadas(self) -> list[dict]:
+        try:
+            resp = await self._client.get("/noticias/", params={"soloPublicadas": "true"})
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.error("Error fetching published news: %s", exc)
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 

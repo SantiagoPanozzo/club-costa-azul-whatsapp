@@ -1,9 +1,9 @@
 import logging
-import traceback
 from dataclasses import dataclass
 from enum import StrEnum
 
 from .. import services_client as svc
+from ..config import settings
 from ..services_client import ServicesAPIError
 from ..state import Session
 from ..storing_client import storing_client as whatsapp_client
@@ -44,8 +44,7 @@ class DatosPersonalesFlow(BaseFlow[DatosPersonalesState]):
         try:
             detalle = await svc.services_client.get_socio_detalle(socio_id)
         except ServicesAPIError:
-            logger.warning("Error fetching socio detail for %s", socio_id)
-            traceback.print_exc()
+            logger.exception("Error fetching member detail")
             await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
             session.end_flow()
             return
@@ -80,7 +79,7 @@ class DatosPersonalesFlow(BaseFlow[DatosPersonalesState]):
         await whatsapp_client.send_text(phone, "\n".join(lines), session=session)
         await whatsapp_client.send_text(
             phone,
-            "Para actualizar tus datos, ingresá a https://clubcostaazul.com",
+            f"Para actualizar tus datos, ingresá a {settings.frontend_url.rstrip('/')}/#/panel-usuario/perfil",
             session=session,
         )
         session.end_flow()

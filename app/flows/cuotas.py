@@ -1,9 +1,9 @@
 import logging
-import traceback
 from dataclasses import dataclass
 from enum import StrEnum
 
 from .. import services_client as svc
+from ..config import settings
 from ..services_client import ServicesAPIError
 from ..state import Session
 from ..storing_client import storing_client as whatsapp_client
@@ -51,8 +51,7 @@ class CuotasFlow(BaseFlow[CuotasState]):
         try:
             cuotas = await svc.services_client.get_cuotas_socio(socio_id)
         except ServicesAPIError:
-            logger.warning("Error fetching cuotas for socio %s", socio_id)
-            traceback.print_exc()
+            logger.exception("Error fetching member dues")
             await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
             session.end_flow()
             return
@@ -76,7 +75,7 @@ class CuotasFlow(BaseFlow[CuotasState]):
         await whatsapp_client.send_text(phone, text, session=session)
         await whatsapp_client.send_text(
             phone,
-            "Para registrar un pago, ingresá a https://clubcostaazul.com",
+            f"Para registrar un pago, ingresá a {settings.frontend_url.rstrip('/')}/#/panel-usuario/pagos",
             session=session,
         )
         session.end_flow()

@@ -1,88 +1,63 @@
-# Club Costa Azul – WhatsApp Bot (bootstrap)
+# Club Costa Azul WhatsApp bot
 
-Stateful WhatsApp bot for Club Costa Azul (Uruguay). This bootstrap implements:
+Stateful Spanish-language WhatsApp bot for club members. It receives signed payloads from the separate webhook router, identifies an active member by WhatsApp number, calls the club API with a server-only bot key, and sends replies through Meta's Graph API.
 
-- Automatic sign-in by WhatsApp number against the services API.
-- A main menu (single option for now).
-- Activity sign-up: list current inscriptions, list available activities, confirm, sign up.
+## Supported member journeys
 
-## Architecture
+- Activities: list active enrollments and available activities, enroll, and cancel.
+- Quotas: list dues and link to the configured payment page.
+- Reservations: list/cancel own reservations and submit a new request with date, time, party size, reason, and notes. New requests remain `Pendiente` until staff approval.
+- Events: list, enroll, withdraw, and re-enroll after a cancellation.
+- Personal data: show the member's own record and link to the configured profile page.
+- News: show currently published news.
+- Navigation: interactive menu plus Spanish text/number aliases, `menu`, `volver`, `ayuda`, `contacto`, and human-contact guidance.
 
-This service does **not** talk to Meta for verification or receive Meta's
-webhook directly. An existing upstream webhook receives Meta's calls and
-forwards the raw payload, unmodified, via POST to `/webhook` on this service.
-This service replies to users by calling the Graph API directly (it needs its
-own WhatsApp token + phone number id).
+Long WhatsApp lists are split into pages of at most ten rows. Unsupported input returns the user to a usable menu.
 
-```
-Meta Cloud API → existing webhook (forwards raw payload) → POST /webhook (this service)
-this service → Graph API (send message) → user
-this service → Club Costa Azul services API (socios / actividades / inscripciones)
-```
+## Delivery and state model
 
-## Project layout
-
-```
-app/
-  main.py            FastAPI app, /webhook endpoint
-  config.py           Env-based settings
-  webhook_parser.py    Parses raw Meta payload into IncomingMessage objects
-  conversation.py      Conversation/state-machine logic (sign-in, menu, signup)
-  state.py             In-memory per-phone session store
-  services_client.py   Club Costa Azul services API client
-  whatsapp_client.py    Graph API client (send text/list/buttons)
+```text
+Meta Cloud API -> webhook router -> signed POST /webhook -> bot
+bot -> Club API (X-Api-Key)
+bot -> Meta Graph API
+bot <-> Redis (sessions, per-phone locks, message and mutation deduplication)
+bot -> MongoDB (optional conversation trace)
 ```
 
-## Setup
+The router signs the exact body with `ROUTER_SHARED_SECRET`, a Unix timestamp, and HMAC-SHA256. The bot rejects missing, invalid, or stale signatures. Redis stores sessions with a TTL, serializes each phone's conversation across replicas, records completed inbound messages, and records successful API mutations before sending their confirmation. This lets router retries recover from an outbound Meta failure without repeating the mutation.
+
+MongoDB is optional telemetry. Failure to initialize or write traces does not stop conversation handling. Set `REQUIRE_REDIS=true` in staging and production; `/health` then returns 503 unless shared Redis is available.
+
+## Configuration
+
+Copy `.env.example` to `.env`. Required application variables are:
+
+| Variable | Purpose |
+| --- | --- |
+| `WHATSAPP_API_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | Meta outbound delivery |
+| `SERVICES_API_BASE_URL`, `BOT_API_KEY` | Club API and server-only bot authentication |
+| `ROUTER_SHARED_SECRET` | Router-to-bot request authentication |
+| `FRONTEND_URL`, `CLUB_CONTACT_TEXT` | User-facing links and support guidance |
+| `SESSION_REDIS_URL` | Shared sessions, locks, and deduplication in deployed environments |
+
+Optional settings include `WHATSAPP_API_VERSION`, `SESSION_TTL_SECONDS`, `MEMBER_REVALIDATE_SECONDS`, `MONGODB_URL`, `REQUIRE_REDIS`, and `LOG_LEVEL`.
+
+## Development and verification
 
 ```bash
 uv sync
-cp .env.example .env  # fill in the values
-```
-
-Required env vars:
-
-| Var | Description |
-|---|---|
-| `WHATSAPP_API_TOKEN` | Graph API access token for this bot's WhatsApp number |
-| `WHATSAPP_PHONE_NUMBER_ID` | Phone number id used to send messages |
-| `WHATSAPP_API_VERSION` | Graph API version, default `v20.0` |
-| `SERVICES_API_BASE_URL` | Base URL of the Club Costa Azul services API |
-| `BOT_API_KEY` | Optional `X-Api-Key` credential for protected bot API calls |
-
-## Run locally
-
-```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest -q
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-Health check: `GET /health`
-Webhook endpoint (point your local webhook forwarder here): `POST /webhook`
-
-## Run with Docker
+The real Redis integration test is opt-in:
 
 ```bash
-docker build -t costa-azul-bot .
-docker run --env-file .env -p 8000:8000 costa-azul-bot
+REDIS_TEST_URL=redis://127.0.0.1:6379/15 uv run pytest tests/test_redis_state_integration.py -q
 ```
 
-## Deploy to Railway
+Build the release image with `docker build -t costa-azul-bot .`. The Dockerfile uses Python 3.12 and installs the exact checked-in `uv.lock` without resolving dependencies during startup.
 
-1. Push this repo, create a new Railway service from it (Dockerfile detected automatically).
-2. Set the env vars listed above in the Railway service settings.
-3. Railway injects `$PORT` at runtime; the Dockerfile's `CMD` already respects it.
-4. Point the upstream webhook's forwarding target at this service's `/webhook` URL.
-
-## Known limitations / next steps
-
-- **State storage is in-memory** (`app/state.py`): fine for a single instance/bootstrap,
-  but lost on restart and incorrect with >1 replica. Swap for Redis (or similar) before
-  scaling, keeping the same `get`/`reset` interface.
-- **No request signature verification** at `/webhook` — relies on the upstream webhook
-  service and network boundary for trust. Add a shared secret if this endpoint is
-  ever exposed beyond that.
-- **No idempotency/dedup** on Meta message IDs — a retried webhook delivery could be
-  processed twice. Low risk in this bootstrap, worth adding `wamid` dedup later.
-- **Activity lists are capped at 10 rows** (WhatsApp's interactive-list limit); if a
-  club ever has more than 10 simultaneously open activities, this will need pagination.
-- **No automated tests** included in this bootstrap.
+The complete flow design is in [docs/flows.md](docs/flows.md). Coordinated release status and integration evidence are in the root [BOT_STABLE_RELEASE_STATUS.md](../BOT_STABLE_RELEASE_STATUS.md).

@@ -6,6 +6,7 @@ The bot uses a flow-based architecture for multi-step conversations. Each flow i
 
 ```
 User message
+  → shared per-phone Redis lock + completed-message check
   → webhook_parser (raw payload → IncomingMessage)
   → conversation.handle_message (router)
       → sign-in check (auto-identify by phone number)
@@ -18,15 +19,16 @@ User message
 - **`conversation.py`** — Thin router. Handles sign-in, global keywords, main menu, and dispatches to the active flow. Does not contain flow logic.
 - **`flows/base.py`** — `BaseFlow[T]` ABC and `FlowResult` enum.
 - **`flows/*.py`** — One module per flow (e.g., `activities.py`).
-- **`state.py`** — `Session` holds `socio`, `active_flow` (registry key), and `flow_state` (typed per-flow dataclass).
+- **`state.py`** — Redis-backed `SessionStore`; `Session` holds `socio`, `active_flow`, typed `flow_state`, and member revalidation time. Local memory is only a development fallback.
 
 ### Message handling chain
 
-1. **Sign-in**: If `session.socio` is `None`, look up the user by phone number. No further processing.
-2. **Global keywords**: If the user texts "menu", "volver", etc., end the current flow and show the main menu.
-3. **Active flow**: If `session.active_flow` is set, dispatch to that flow's `handle()` method.
-4. **Menu selection**: If the user picked a menu item whose `id` matches a flow registry key, enter that flow.
-5. **Fallback**: Show the main menu.
+1. **Lock/deduplication**: Serialize the phone's messages, skip a WhatsApp message ID only after its earlier delivery completed successfully, and reload its session.
+2. **Sign-in/revalidation**: Look up a new member by phone and periodically revalidate a cached member.
+3. **Global keywords**: If the user texts `menu`, `volver`, `ayuda`, etc., end the current flow and show the relevant response/menu.
+4. **Active flow**: If `session.active_flow` is set, dispatch to that flow's `handle()` method.
+5. **Menu selection**: Accept the interactive ID or its documented text/number alias.
+6. **Fallback**: Show the main menu.
 
 ## How to add a new flow
 
@@ -126,3 +128,5 @@ The menu item `id` must match the `FLOW_REGISTRY` key exactly — this is how th
 - Errors from the services API should be caught, logged, and result in a generic error message to the user. Don't leak internal details.
 - WhatsApp limits: button titles max 20 chars, list row titles max 24 chars, list row descriptions max 72 chars, max 3 buttons, max 10 list rows. These are enforced by `whatsapp_client.py` via truncation, but keep your text concise.
 - Use `session.end_flow()` if a flow needs to exit early (e.g., no data available). The router will handle showing the menu.
+- Wrap every externally visible mutation with `sessions.was_mutation_applied()` / `mark_mutation_applied()` using the inbound `wamid`. Mark it after the API succeeds and before sending confirmation.
+- Use `send_list_pages()` for dynamic row sets so items beyond WhatsApp's ten-row limit are not hidden.

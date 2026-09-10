@@ -1,15 +1,15 @@
 import logging
-import traceback
 from dataclasses import dataclass, field
 from datetime import date
 from enum import StrEnum
 
 from .. import services_client as svc
 from ..services_client import ServicesAPIConflict, ServicesAPIError
-from ..state import Session
+from ..state import Session, sessions
 from ..storing_client import storing_client as whatsapp_client
 from ..webhook_parser import IncomingMessage
 from .base import BaseFlow, FlowResult
+from .utils import send_list_pages
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +17,15 @@ GENERIC_ERROR = "Uy, tuvimos un problema técnico. Probá de nuevo en unos minut
 EVENT_PREFIX = "evt_"
 CONFIRM_YES = "evt_confirm_yes"
 CONFIRM_NO = "evt_confirm_no"
+CANCEL_PREFIX = "evt_cancel_"
+CANCEL_YES = "evt_cancel_yes"
+CANCEL_NO = "evt_cancel_no"
 
 
 class EventosStep(StrEnum):
     AWAITING_CHOICE = "awaiting_choice"
     AWAITING_CONFIRM = "awaiting_confirm"
+    AWAITING_CANCEL_CONFIRM = "awaiting_cancel_confirm"
 
 
 @dataclass
@@ -29,6 +33,9 @@ class EventosState:
     step: EventosStep = EventosStep.AWAITING_CHOICE
     available_events: dict[str, dict[str, object]] = field(default_factory=dict)
     selected_event: dict[str, object] | None = None
+    events_by_id: dict[str, dict[str, object]] = field(default_factory=dict)
+    confirmed_inscriptions: dict[str, dict[str, object]] = field(default_factory=dict)
+    selected_inscription: dict[str, object] | None = None
 
 
 class EventosFlow(BaseFlow[EventosState]):
@@ -47,6 +54,8 @@ class EventosFlow(BaseFlow[EventosState]):
             return await self._handle_choice(phone, session, state, msg)
         if state.step == EventosStep.AWAITING_CONFIRM:
             return await self._handle_confirm(phone, session, state, msg)
+        if state.step == EventosStep.AWAITING_CANCEL_CONFIRM:
+            return await self._handle_cancel_confirm(phone, session, state, msg)
 
         return FlowResult.DONE
 
@@ -59,18 +68,19 @@ class EventosFlow(BaseFlow[EventosState]):
             inscripciones = await svc.services_client.get_inscripciones_evento_socio(socio_id)
             eventos = await svc.services_client.get_eventos()
         except ServicesAPIError:
-            logger.warning("Error fetching eventos or inscriptions for socio %s", socio_id)
-            traceback.print_exc()
+            logger.exception("Error fetching events or member enrollments")
             await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
             session.end_flow()
             return
 
         eventos_by_id: dict[object, dict[str, object]] = {e["id"]: e for e in eventos}
-        inscriptas_ids = {i.get("eventoId") for i in inscripciones}
+        state.events_by_id = {str(e["id"]): e for e in eventos}
+        confirmadas = [i for i in inscripciones if i.get("estado") == "Confirmada"]
+        inscriptas_ids = {i.get("eventoId") for i in confirmadas}
 
-        if inscripciones:
+        if confirmadas:
             lines: list[str] = []
-            for i in inscripciones:
+            for i in confirmadas:
                 evento = eventos_by_id.get(i.get("eventoId"))
                 if evento:
                     lines.append(f"- {evento['nombre']} ({evento.get('fecha', '')})")
@@ -80,6 +90,27 @@ class EventosFlow(BaseFlow[EventosState]):
         else:
             text = "Todavía no estás inscripto/a en ningún evento."
         await whatsapp_client.send_text(phone, text, session=session)
+
+        if confirmadas:
+            state.confirmed_inscriptions = {str(i["id"]): i for i in confirmadas}
+            rows = []
+            for inscription in confirmadas:
+                event = eventos_by_id.get(inscription.get("eventoId"), {})
+                rows.append(
+                    {
+                        "id": f"{CANCEL_PREFIX}{inscription['id']}",
+                        "title": str(event.get("nombre", "Evento")),
+                        "description": f"{event.get('fecha', '')} - cancelar inscripción",
+                    }
+                )
+            await send_list_pages(
+                phone,
+                body="Si necesitás darte de baja de un evento, elegilo acá:",
+                button_text="Mis inscripciones",
+                rows=rows,
+                section_title="Eventos inscriptos",
+                session=session,
+            )
 
         today = date.today().isoformat()
         disponibles = [
@@ -97,24 +128,24 @@ class EventosFlow(BaseFlow[EventosState]):
                 "No hay otros eventos disponibles para inscribirte en este momento.",
                 session=session,
             )
-            session.end_flow()
+            if not confirmadas:
+                session.end_flow()
             return
 
         state.available_events = {str(e["id"]): e for e in disponibles}
         state.step = EventosStep.AWAITING_CHOICE
 
-        note = " (mostrando los primeros 10)" if len(disponibles) > 10 else ""
         rows = [
             {
                 "id": f"{EVENT_PREFIX}{e['id']}",
                 "title": str(e["nombre"]),
                 "description": f"{e.get('fecha', '')} - ${float(str(e.get('costoSocio', 0))):.0f}",
             }
-            for e in disponibles[:10]
+            for e in disponibles
         ]
-        await whatsapp_client.send_list(
-            to=phone,
-            body=f"Elegí un evento para ver más detalles{note}:",
+        await send_list_pages(
+            phone,
+            body="Elegí un evento para ver más detalles:",
             button_text="Ver eventos",
             rows=rows,
             section_title="Eventos disponibles",
@@ -125,6 +156,25 @@ class EventosFlow(BaseFlow[EventosState]):
         self, phone: str, session: Session, state: EventosState, msg: IncomingMessage
     ) -> FlowResult:
         iid = msg.interactive_id or ""
+        if iid.startswith(CANCEL_PREFIX):
+            inscription = state.confirmed_inscriptions.get(iid[len(CANCEL_PREFIX) :])
+            if not inscription:
+                await whatsapp_client.send_text(phone, "Esa inscripción ya no está disponible.", session=session)
+                return FlowResult.DONE
+            state.selected_inscription = inscription
+            state.step = EventosStep.AWAITING_CANCEL_CONFIRM
+            event = state.events_by_id.get(str(inscription.get("eventoId")))
+            event_name = event.get("nombre", "el evento") if event else "el evento"
+            await whatsapp_client.send_buttons(
+                phone,
+                body=(
+                    f"¿Confirmás que querés darte de baja de *{event_name}*? "
+                    "Los pagos registrados no se reembolsan automáticamente."
+                ),
+                buttons=[(CANCEL_YES, "Dar de baja"), (CANCEL_NO, "Volver")],
+                session=session,
+            )
+            return FlowResult.CONTINUE
         if not iid.startswith(EVENT_PREFIX):
             await whatsapp_client.send_text(phone, "Por favor, elegí un evento de la lista.", session=session)
             return FlowResult.CONTINUE
@@ -182,17 +232,15 @@ class EventosFlow(BaseFlow[EventosState]):
             socio = session.socio
             assert socio is not None
             try:
-                await svc.services_client.post_inscripcion_evento(str(evento["id"]), str(socio["id"]))
+                operation = "create-event-enrollment"
+                if not await sessions.was_mutation_applied(msg.wamid, operation):
+                    await svc.services_client.post_inscripcion_evento(str(evento["id"]), str(socio["id"]))
+                    await sessions.mark_mutation_applied(msg.wamid, operation)
             except ServicesAPIConflict as exc:
                 await whatsapp_client.send_text(phone, str(exc), session=session)
                 return FlowResult.DONE
             except ServicesAPIError:
-                logger.warning(
-                    "Error creating evento inscription for socio %s to evento %s",
-                    socio["id"],
-                    evento["id"],
-                )
-                traceback.print_exc()
+                logger.exception("Error creating event enrollment")
                 await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
                 return FlowResult.DONE
             await whatsapp_client.send_text(
@@ -207,3 +255,33 @@ class EventosFlow(BaseFlow[EventosState]):
 
         await whatsapp_client.send_text(phone, "Por favor, tocá Inscribirme o Volver.", session=session)
         return FlowResult.CONTINUE
+
+    async def _handle_cancel_confirm(
+        self, phone: str, session: Session, state: EventosState, msg: IncomingMessage
+    ) -> FlowResult:
+        if msg.interactive_id == CANCEL_NO:
+            return FlowResult.DONE
+        if msg.interactive_id != CANCEL_YES:
+            await whatsapp_client.send_text(phone, "Por favor, tocá Dar de baja o Volver.", session=session)
+            return FlowResult.CONTINUE
+
+        inscription = state.selected_inscription
+        assert inscription is not None
+        try:
+            operation = "cancel-event-enrollment"
+            if not await sessions.was_mutation_applied(msg.wamid, operation):
+                await svc.services_client.delete_inscripcion_evento(
+                    str(inscription["eventoId"]),
+                    str(inscription["id"]),
+                )
+                await sessions.mark_mutation_applied(msg.wamid, operation)
+        except ServicesAPIConflict as exc:
+            await whatsapp_client.send_text(phone, str(exc), session=session)
+            return FlowResult.DONE
+        except ServicesAPIError:
+            logger.exception("Error cancelling event enrollment")
+            await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
+            return FlowResult.DONE
+
+        await whatsapp_client.send_text(phone, "Tu inscripción al evento fue cancelada.", session=session)
+        return FlowResult.DONE

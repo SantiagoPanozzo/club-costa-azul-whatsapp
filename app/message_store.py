@@ -6,27 +6,43 @@ from datetime import datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from .config import settings
+from .privacy import log_reference
 from .state import Session
 from .webhook_parser import IncomingMessage
 
 logger = logging.getLogger(__name__)
 
-_client: AsyncIOMotorClient = AsyncIOMotorClient(settings.mongodb_url)
-_db = _client.get_default_database("club_costa_azul")
-_conversations = _db["conversations"]
-_messages = _db["messages"]
+_client: AsyncIOMotorClient | None = AsyncIOMotorClient(settings.mongodb_url) if settings.mongodb_url else None
+_db = _client.get_default_database("club_costa_azul") if _client is not None else None
+_conversations = _db["conversations"] if _db is not None else None
+_messages = _db["messages"] if _db is not None else None
+_enabled = False
 
 
 async def ensure_indexes() -> None:
-    await _conversations.create_index("phone", unique=True)
-    await _conversations.create_index("last_message_at")
-    await _messages.create_index([("conversation_id", 1), ("timestamp", 1)])
-    await _messages.create_index([("phone", 1), ("timestamp", 1)])
-    await _messages.create_index("wamid", unique=True, sparse=True)
+    global _enabled
+    if _conversations is None or _messages is None:
+        logger.warning("MONGODB_URL is not configured; conversation trace storage is disabled")
+        return
+    try:
+        await _conversations.create_index("phone", unique=True)
+        await _conversations.create_index("last_message_at")
+        await _messages.create_index([("conversation_id", 1), ("timestamp", 1)])
+        await _messages.create_index([("phone", 1), ("timestamp", 1)])
+        await _messages.create_index("wamid", unique=True, sparse=True)
+        _enabled = True
+    except Exception:
+        _enabled = False
+        logger.exception("MongoDB is unavailable; conversation trace storage is disabled")
+
+
+def is_enabled() -> bool:
+    return _enabled
 
 
 async def close() -> None:
-    _client.close()
+    if _client is not None:
+        _client.close()
 
 
 def _socio_fields(session: Session) -> dict:
@@ -40,6 +56,7 @@ def _socio_fields(session: Session) -> dict:
 
 
 async def _upsert_conversation(phone: str, contact_name: str | None, session: Session, now: datetime) -> str:
+    assert _conversations is not None
     result = await _conversations.find_one_and_update(
         {"phone": phone},
         {
@@ -58,6 +75,8 @@ async def _upsert_conversation(phone: str, contact_name: str | None, session: Se
 
 
 async def store_incoming(incoming: IncomingMessage, session: Session) -> None:
+    if not _enabled or _messages is None:
+        return
     try:
         now = datetime.now(timezone.utc)
         if incoming.timestamp:
@@ -89,7 +108,7 @@ async def store_incoming(incoming: IncomingMessage, session: Session) -> None:
             }
         )
     except Exception:
-        logger.exception("Failed to store incoming message from %s", incoming.phone)
+        logger.exception("Failed to store incoming message for member_ref=%s", log_reference(incoming.phone))
 
 
 async def store_outgoing(
@@ -100,6 +119,8 @@ async def store_outgoing(
     session: Session,
     contact_name: str | None = None,
 ) -> None:
+    if not _enabled or _messages is None:
+        return
     try:
         now = datetime.now(timezone.utc)
         conv_id = await _upsert_conversation(phone, contact_name, session, now)
@@ -117,4 +138,4 @@ async def store_outgoing(
             }
         )
     except Exception:
-        logger.exception("Failed to store outgoing message to %s", phone)
+        logger.exception("Failed to store outgoing message for member_ref=%s", log_reference(phone))

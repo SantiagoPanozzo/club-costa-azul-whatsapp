@@ -6,11 +6,13 @@ and dispatches to the active flow.
 """
 
 import logging
-import traceback
+import time
 
 from . import message_store
 from . import services_client as svc
+from .config import settings
 from .flows import FLOW_REGISTRY, FlowResult
+from .privacy import log_reference
 from .services_client import ServicesAPIError
 from .state import Session, sessions
 from .storing_client import storing_client as whatsapp_client
@@ -55,6 +57,11 @@ MENU_OPTIONS: list[dict[str, str]] = [
         "title": "Comunicados",
         "description": "Novedades y comunicados",
     },
+    {
+        "id": "help",
+        "title": "Ayuda y contacto",
+        "description": "Hablar con administración",
+    },
 ]
 
 GLOBAL_KEYWORDS: dict[str, str] = {
@@ -62,20 +69,64 @@ GLOBAL_KEYWORDS: dict[str, str] = {
     "menú": "menu",
     "inicio": "menu",
     "volver": "menu",
+    "ayuda": "help",
+    "humano": "help",
+    "contacto": "help",
+}
+
+MENU_TEXT_ALIASES: dict[str, str] = {
+    "1": "activities",
+    "actividades": "activities",
+    "2": "cuotas",
+    "cuotas": "cuotas",
+    "pagos": "cuotas",
+    "3": "reservas",
+    "reservas": "reservas",
+    "4": "eventos",
+    "eventos": "eventos",
+    "5": "datos_personales",
+    "datos": "datos_personales",
+    "datos personales": "datos_personales",
+    "6": "comunicados",
+    "comunicados": "comunicados",
+    "novedades": "comunicados",
+    "7": "help",
 }
 
 
 async def handle_message(incoming: IncomingMessage) -> None:
     phone = incoming.phone
-    session = sessions.get(phone)
+    async with sessions.locked(phone) as session:
+        if not await sessions.claim_message(incoming.wamid):
+            logger.info("Skipping already processed WhatsApp message_ref=%s", log_reference(incoming.wamid))
+            return
+        await _handle_locked(incoming, session)
+        await sessions.mark_message_processed(incoming.wamid)
 
+
+async def _handle_locked(incoming: IncomingMessage, session: Session) -> None:
+    phone = incoming.phone
     await message_store.store_incoming(incoming, session)
 
     if session.socio is None:
-        await _sign_in(phone, session, incoming)
+        if await _refresh_member(phone, session, greet=True):
+            # The first message starts the authenticated session; showing the
+            # menu is less surprising than treating an old button as current.
+            await _send_main_menu(phone, session)
         return
 
-    if _handle_global_keyword(incoming, session):
+    if time.time() - session.member_verified_at >= settings.member_revalidate_seconds:
+        if not await _refresh_member(phone, session, greet=False):
+            return
+
+    global_action = _global_action(incoming)
+    if global_action == "menu":
+        session.end_flow()
+        await _send_main_menu(phone, session)
+        return
+    if global_action == "help":
+        session.end_flow()
+        await _send_help(phone, session)
         await _send_main_menu(phone, session)
         return
 
@@ -83,46 +134,57 @@ async def handle_message(incoming: IncomingMessage) -> None:
         await _dispatch_to_flow(phone, session, incoming)
         return
 
-    if incoming.interactive_id and incoming.interactive_id in FLOW_REGISTRY:
-        await _enter_flow(phone, session, incoming.interactive_id)
+    menu_choice = incoming.interactive_id
+    if menu_choice is None and incoming.text:
+        menu_choice = MENU_TEXT_ALIASES.get(incoming.text.strip().lower())
+    if menu_choice == "help":
+        await _send_help(phone, session)
+        await _send_main_menu(phone, session)
+        return
+    if menu_choice in FLOW_REGISTRY:
+        await _enter_flow(phone, session, menu_choice)
         return
 
     await _send_main_menu(phone, session)
 
 
-def _handle_global_keyword(incoming: IncomingMessage, session: Session) -> bool:
+def _global_action(incoming: IncomingMessage) -> str | None:
     if incoming.text is None:
-        return False
+        return None
     keyword = incoming.text.strip().lower()
-    action = GLOBAL_KEYWORDS.get(keyword)
-    if action == "menu":
-        session.end_flow()
-        return True
-    return False
+    return GLOBAL_KEYWORDS.get(keyword)
 
 
-async def _sign_in(phone: str, session: Session, incoming: IncomingMessage) -> None:
+async def _send_help(phone: str, session: Session) -> None:
+    await whatsapp_client.send_text(phone, settings.club_contact_text, session=session)
+
+
+async def _refresh_member(phone: str, session: Session, *, greet: bool) -> bool:
     try:
         socio = await svc.services_client.get_socio_by_whatsapp(phone)
     except ServicesAPIError:
-        logger.warning("Error looking up socio for phone %s", phone)
-        traceback.print_exc()
+        logger.exception("Error looking up socio for member_ref=%s", log_reference(phone))
         await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
-        return
+        return False
 
     if socio is None:
+        session.socio = None
+        session.member_verified_at = 0
+        session.end_flow()
         await whatsapp_client.send_text(phone, NOT_REGISTERED, session=session)
-        return
+        return False
 
     session.socio = socio
-    nombre = socio.get("nombre", "")
-    saludo = f"¡Hola, {nombre}!" if nombre else "¡Hola!"
-    await whatsapp_client.send_text(
-        phone,
-        f"{saludo} Bienvenido/a al bot del Club Costa Azul. Te ayudo a gestionar tus actividades.",
-        session=session,
-    )
-    await _send_main_menu(phone, session)
+    session.member_verified_at = time.time()
+    if greet:
+        nombre = socio.get("nombre", "")
+        saludo = f"¡Hola, {nombre}!" if nombre else "¡Hola!"
+        await whatsapp_client.send_text(
+            phone,
+            f"{saludo} Bienvenido/a al bot del Club Costa Azul.",
+            session=session,
+        )
+    return True
 
 
 async def _send_main_menu(phone: str, session: Session) -> None:
@@ -141,12 +203,18 @@ async def _enter_flow(phone: str, session: Session, flow_name: str) -> None:
     flow = FLOW_REGISTRY[flow_name]
     session.active_flow = flow_name
     await flow.enter(phone, session)
+    if session.active_flow is None:
+        await _send_main_menu(phone, session)
 
 
 async def _dispatch_to_flow(phone: str, session: Session, incoming: IncomingMessage) -> None:
     flow = FLOW_REGISTRY.get(session.active_flow)  # type: ignore[arg-type]
     if flow is None:
-        logger.warning("Unknown active flow %r for phone %s, resetting", session.active_flow, phone)
+        logger.warning(
+            "Unknown active flow %r for member_ref=%s, resetting",
+            session.active_flow,
+            log_reference(phone),
+        )
         await _send_main_menu(phone, session)
         return
 

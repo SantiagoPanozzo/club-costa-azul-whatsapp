@@ -1,15 +1,15 @@
 import logging
-import traceback
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from enum import StrEnum
 
 from .. import services_client as svc
 from ..services_client import ServicesAPIConflict, ServicesAPIError
-from ..state import Session
+from ..state import Session, sessions
 from ..storing_client import storing_client as whatsapp_client
 from ..webhook_parser import IncomingMessage
 from .base import BaseFlow, FlowResult
+from .utils import send_list_pages
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ CANCEL_NO = "cancel_deny"
 
 MAX_DAYS_AHEAD = 90
 DATE_FORMATS = ["%d/%m/%Y", "%d-%m-%Y"]
+TIME_FORMAT = "%H:%M"
 
 
 def _parse_date(text: str) -> date | None:
@@ -38,10 +39,28 @@ def _parse_date(text: str) -> date | None:
     return None
 
 
+def _parse_time_range(text: str) -> tuple[str, str] | None:
+    parts = [part.strip() for part in text.replace(" a ", "-").split("-", 1)]
+    if len(parts) != 2:
+        return None
+    try:
+        start = datetime.strptime(parts[0], TIME_FORMAT).time()
+        end = datetime.strptime(parts[1], TIME_FORMAT).time()
+    except ValueError:
+        return None
+    if end <= start:
+        return None
+    return start.strftime(TIME_FORMAT), end.strftime(TIME_FORMAT)
+
+
 class ReservasStep(StrEnum):
     AWAITING_ACTION = "awaiting_action"
     AWAITING_SPACE = "awaiting_space"
     AWAITING_DATE = "awaiting_date"
+    AWAITING_TIME = "awaiting_time"
+    AWAITING_PEOPLE = "awaiting_people"
+    AWAITING_REASON = "awaiting_reason"
+    AWAITING_NOTES = "awaiting_notes"
     AWAITING_CONFIRM = "awaiting_confirm"
     VIEWING_RESERVAS = "viewing_reservas"
     AWAITING_CANCEL_CONFIRM = "awaiting_cancel_confirm"
@@ -53,6 +72,11 @@ class ReservasState:
     available_spaces: dict[str, dict[str, object]] = field(default_factory=dict)
     selected_space: dict[str, object] | None = None
     selected_date: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    people_count: int | None = None
+    reason: str | None = None
+    notes: str | None = None
     reservas: dict[str, dict[str, object]] = field(default_factory=dict)
     selected_reserva: dict[str, object] | None = None
 
@@ -81,6 +105,14 @@ class ReservasFlow(BaseFlow[ReservasState]):
             return await self._handle_space(phone, session, state, msg)
         if state.step == ReservasStep.AWAITING_DATE:
             return await self._handle_date(phone, session, state, msg)
+        if state.step == ReservasStep.AWAITING_TIME:
+            return await self._handle_time(phone, session, state, msg)
+        if state.step == ReservasStep.AWAITING_PEOPLE:
+            return await self._handle_people(phone, session, state, msg)
+        if state.step == ReservasStep.AWAITING_REASON:
+            return await self._handle_reason(phone, session, state, msg)
+        if state.step == ReservasStep.AWAITING_NOTES:
+            return await self._handle_notes(phone, session, state, msg)
         if state.step == ReservasStep.AWAITING_CONFIRM:
             return await self._handle_confirm(phone, session, state, msg)
         if state.step == ReservasStep.VIEWING_RESERVAS:
@@ -105,8 +137,7 @@ class ReservasFlow(BaseFlow[ReservasState]):
         try:
             espacios = await svc.services_client.get_espacios()
         except ServicesAPIError:
-            logger.warning("Error fetching espacios")
-            traceback.print_exc()
+            logger.exception("Error fetching spaces")
             await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
             return FlowResult.DONE
 
@@ -122,18 +153,17 @@ class ReservasFlow(BaseFlow[ReservasState]):
         state.available_spaces = {str(e["id"]): e for e in disponibles}
         state.step = ReservasStep.AWAITING_SPACE
 
-        note = " (mostrando los primeros 10)" if len(disponibles) > 10 else ""
         rows = [
             {
                 "id": f"{SPACE_PREFIX}{e['id']}",
                 "title": str(e["nombre"]),
                 "description": f"Capacidad: {e.get('capacidad', '?')} - ${float(str(e.get('costo', 0))):.0f}",
             }
-            for e in disponibles[:10]
+            for e in disponibles
         ]
-        await whatsapp_client.send_list(
-            to=phone,
-            body=f"Elegí un espacio para reservar{note}:",
+        await send_list_pages(
+            phone,
+            body="Elegí un espacio para reservar:",
             button_text="Ver espacios",
             rows=rows,
             section_title="Espacios disponibles",
@@ -206,17 +236,89 @@ class ReservasFlow(BaseFlow[ReservasState]):
             return FlowResult.CONTINUE
 
         state.selected_date = parsed.isoformat()
+        state.step = ReservasStep.AWAITING_TIME
+        await whatsapp_client.send_text(
+            phone,
+            "Escribí el horario de inicio y fin como HH:MM-HH:MM (ej: 18:00-20:00):",
+            session=session,
+        )
+        return FlowResult.CONTINUE
+
+    async def _handle_time(
+        self, phone: str, session: Session, state: ReservasState, msg: IncomingMessage
+    ) -> FlowResult:
+        parsed = _parse_time_range(msg.text or "")
+        if parsed is None:
+            await whatsapp_client.send_text(
+                phone,
+                "No pude entender el horario. Escribilo como HH:MM-HH:MM y asegurate de que el fin sea posterior.",
+                session=session,
+            )
+            return FlowResult.CONTINUE
+        state.start_time, state.end_time = parsed
+        state.step = ReservasStep.AWAITING_PEOPLE
+        await whatsapp_client.send_text(phone, "¿Para cuántas personas es la reserva?", session=session)
+        return FlowResult.CONTINUE
+
+    async def _handle_people(
+        self, phone: str, session: Session, state: ReservasState, msg: IncomingMessage
+    ) -> FlowResult:
+        try:
+            people = int((msg.text or "").strip())
+        except ValueError:
+            people = 0
         espacio = state.selected_space
         assert espacio is not None
+        capacity = int(espacio.get("capacidad", 0))
+        if people <= 0 or people > capacity:
+            await whatsapp_client.send_text(
+                phone,
+                f"Indicá una cantidad entre 1 y {capacity}.",
+                session=session,
+            )
+            return FlowResult.CONTINUE
+        state.people_count = people
+        state.step = ReservasStep.AWAITING_REASON
+        await whatsapp_client.send_text(phone, "Contanos brevemente el motivo de la reserva:", session=session)
+        return FlowResult.CONTINUE
 
-        fecha_display = parsed.strftime("%d/%m/%Y")
+    async def _handle_reason(
+        self, phone: str, session: Session, state: ReservasState, msg: IncomingMessage
+    ) -> FlowResult:
+        reason = (msg.text or "").strip()
+        if not reason:
+            await whatsapp_client.send_text(
+                phone, "El motivo es obligatorio. Escribí una breve descripción.", session=session
+            )
+            return FlowResult.CONTINUE
+        state.reason = reason
+        state.step = ReservasStep.AWAITING_NOTES
+        await whatsapp_client.send_text(
+            phone,
+            "Si querés agregar notas, escribilas ahora. Si no, respondé *omitir*.",
+            session=session,
+        )
+        return FlowResult.CONTINUE
+
+    async def _handle_notes(
+        self, phone: str, session: Session, state: ReservasState, msg: IncomingMessage
+    ) -> FlowResult:
+        notes = (msg.text or "").strip()
+        state.notes = None if notes.lower() in {"omitir", "no", "ninguna"} else notes or None
+        espacio = state.selected_space
+        assert espacio is not None and state.selected_date is not None
+        fecha_display = datetime.strptime(state.selected_date, "%Y-%m-%d").strftime("%d/%m/%Y")
         await whatsapp_client.send_buttons(
             phone,
             body=(
-                f"¿Confirmás tu reserva?\n\n"
+                f"¿Confirmás la solicitud?\n\n"
                 f"📍 Espacio: *{espacio['nombre']}*\n"
                 f"📅 Fecha: {fecha_display}\n"
-                f"💲 Costo: ${float(str(espacio.get('costo', 0))):.0f}"
+                f"🕐 Horario: {state.start_time}-{state.end_time}\n"
+                f"👥 Personas: {state.people_count}\n"
+                f"📝 Motivo: {state.reason}\n"
+                f"💲 Costo: ${float(str(espacio.get('costo', 0))):.0f}\n\n"
+                "La solicitud quedará pendiente de aprobación."
             ),
             buttons=[(CONFIRM_YES, "Confirmar"), (CONFIRM_NO, "Cancelar")],
             session=session,
@@ -232,27 +334,39 @@ class ReservasFlow(BaseFlow[ReservasState]):
             assert espacio is not None
             socio = session.socio
             assert socio is not None
+            assert state.selected_date is not None
+            assert state.start_time is not None
+            assert state.end_time is not None
+            assert state.people_count is not None
+            assert state.reason is not None
 
             try:
-                await svc.services_client.post_reserva(str(socio["id"]), str(espacio["id"]), state.selected_date)
+                operation = "create-reservation"
+                if not await sessions.was_mutation_applied(msg.wamid, operation):
+                    await svc.services_client.post_reserva(
+                        str(socio["id"]),
+                        str(espacio["id"]),
+                        state.selected_date,
+                        state.start_time,
+                        state.end_time,
+                        state.people_count,
+                        state.reason,
+                        state.notes,
+                    )
+                    await sessions.mark_mutation_applied(msg.wamid, operation)
             except ServicesAPIConflict as exc:
                 await whatsapp_client.send_text(phone, str(exc), session=session)
                 return FlowResult.DONE
             except ServicesAPIError:
-                logger.warning(
-                    "Error creating reserva (socio=%s, espacio=%s, fecha=%s)",
-                    socio["id"],
-                    espacio["id"],
-                    state.selected_date,
-                )
-                traceback.print_exc()
+                logger.exception("Error creating reservation request")
                 await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
                 return FlowResult.DONE
 
             fecha_display = datetime.strptime(state.selected_date, "%Y-%m-%d").strftime("%d/%m/%Y")
             await whatsapp_client.send_text(
                 phone,
-                f"¡Reserva confirmada! *{espacio['nombre']}* para el {fecha_display}.",
+                f"¡Solicitud enviada! *{espacio['nombre']}* para el {fecha_display}. "
+                "Queda pendiente de aprobación por la directiva.",
                 session=session,
             )
             return FlowResult.DONE
@@ -271,8 +385,7 @@ class ReservasFlow(BaseFlow[ReservasState]):
         try:
             reservas = await svc.services_client.get_reservas_socio(str(socio["id"]))
         except ServicesAPIError:
-            logger.warning("Error fetching reservas for socio %s", socio["id"])
-            traceback.print_exc()
+            logger.exception("Error fetching member reservations")
             await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
             return FlowResult.DONE
 
@@ -284,18 +397,17 @@ class ReservasFlow(BaseFlow[ReservasState]):
         state.reservas = {str(r["id"]): r for r in activas}
         state.step = ReservasStep.VIEWING_RESERVAS
 
-        note = " (mostrando las primeras 10)" if len(activas) > 10 else ""
         rows = [
             {
                 "id": f"{RESERVA_PREFIX}{r['id']}",
                 "title": str(r.get("nombreEspacio", "Espacio")),
                 "description": f"{r.get('fecha', '')} - {r.get('estado', '')}",
             }
-            for r in activas[:10]
+            for r in activas
         ]
-        await whatsapp_client.send_list(
-            to=phone,
-            body=f"Tus reservas{note}. Elegí una para ver opciones:",
+        await send_list_pages(
+            phone,
+            body="Tus reservas. Elegí una para ver opciones:",
             button_text="Ver reservas",
             rows=rows,
             section_title="Mis reservas",
@@ -342,10 +454,17 @@ class ReservasFlow(BaseFlow[ReservasState]):
             assert reserva is not None
 
             try:
-                await svc.services_client.delete_reserva(str(reserva["id"]))
+                socio = session.socio
+                assert socio is not None
+                operation = "cancel-reservation"
+                if not await sessions.was_mutation_applied(msg.wamid, operation):
+                    await svc.services_client.delete_reserva(str(reserva["id"]), str(socio["id"]))
+                    await sessions.mark_mutation_applied(msg.wamid, operation)
+            except ServicesAPIConflict as exc:
+                await whatsapp_client.send_text(phone, str(exc), session=session)
+                return FlowResult.DONE
             except ServicesAPIError:
-                logger.warning("Error cancelling reserva %s", reserva["id"])
-                traceback.print_exc()
+                logger.exception("Error cancelling reservation")
                 await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
                 return FlowResult.DONE
 

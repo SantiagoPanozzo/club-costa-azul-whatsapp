@@ -8,7 +8,7 @@ from .whatsapp_client import whatsapp_client
 class StoringClient:
     """Delegates to whatsapp_client and stores every sent message."""
 
-    async def send_text(self, to: str, body: str, *, session: Session | None = None) -> str | None:
+    async def send_text(self, to: str, body: str, *, session: Session | None = None) -> str:
         wamid = await whatsapp_client.send_text(to, body)
         if session is not None:
             await message_store.store_outgoing(
@@ -27,7 +27,7 @@ class StoringClient:
         buttons: list[tuple[str, str]],
         *,
         session: Session | None = None,
-    ) -> str | None:
+    ) -> str:
         wamid = await whatsapp_client.send_buttons(to, body, buttons)
         if session is not None:
             await message_store.store_outgoing(
@@ -51,7 +51,7 @@ class StoringClient:
         section_title: str = "Opciones",
         *,
         session: Session | None = None,
-    ) -> str | None:
+    ) -> str:
         wamid = await whatsapp_client.send_list(to, body, button_text, rows, section_title)
         if session is not None:
             await message_store.store_outgoing(

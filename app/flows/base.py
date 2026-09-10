@@ -33,4 +33,12 @@ class BaseFlow(ABC, Generic[T]):
         """Handle a message while this flow is active."""
 
     def get_state(self, session: Session) -> T:
+        if isinstance(session.flow_state, dict):
+            state = self.create_state()
+            for key, value in session.flow_state.items():
+                current = getattr(state, key, None)
+                if isinstance(current, StrEnum):
+                    value = type(current)(value)
+                setattr(state, key, value)
+            session.flow_state = state
         return cast(T, session.flow_state)
