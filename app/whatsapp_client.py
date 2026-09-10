@@ -16,11 +16,15 @@ def _truncate(text: str, limit: int) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
+MAX_MEDIA_SIZE = 5 * 1024 * 1024
+
+
 class WhatsAppClient:
     def __init__(self):
         self._url = (
             f"https://graph.facebook.com/{settings.whatsapp_api_version}/{settings.whatsapp_phone_number_id}/messages"
         )
+        self._graph_base = f"https://graph.facebook.com/{settings.whatsapp_api_version}"
         self._client = httpx.AsyncClient(
             headers={
                 "Authorization": f"Bearer {settings.whatsapp_api_token}",
@@ -82,6 +86,34 @@ class WhatsAppClient:
                 },
             }
         )
+
+    async def download_media(self, media_id: str) -> tuple[bytes, str] | None:
+        """Download a media file sent by a user. Returns (file_bytes, content_type) or None."""
+        try:
+            meta_resp = await self._client.get(f"{self._graph_base}/{media_id}")
+            meta_resp.raise_for_status()
+            media_url = meta_resp.json().get("url")
+            if not media_url:
+                logger.error("No URL in media metadata for %s", media_id)
+                return None
+
+            resp = await self._client.get(
+                media_url,
+                headers={"Authorization": f"Bearer {settings.whatsapp_api_token}"},
+            )
+            resp.raise_for_status()
+
+            if len(resp.content) > MAX_MEDIA_SIZE:
+                logger.warning("Media %s exceeds 5MB (%d bytes), rejecting", media_id, len(resp.content))
+                return None
+
+            content_type = resp.headers.get("content-type", "application/octet-stream")
+            return resp.content, content_type
+        except httpx.HTTPError as exc:
+            body = getattr(exc, "response", None)
+            body_text = body.text if body is not None else ""
+            logger.error("Error downloading media %s: %s | response=%s", media_id, exc, body_text)
+            return None
 
     async def send_list(
         self,
