@@ -17,6 +17,10 @@ class ServicesAPIConflict(ServicesAPIError):
     """Raised on 409 Conflict — the API rejected the operation with a user-facing message."""
 
 
+class ServicesAPIBadRequest(ServicesAPIError):
+    """Raised on 400 Bad Request — the API rejected the input with a user-facing message."""
+
+
 class ServicesClient:
     def __init__(self):
         self._client = httpx.AsyncClient(base_url=settings.services_api_base_url, timeout=10.0)
@@ -228,6 +232,40 @@ class ServicesClient:
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             logger.error("Error cancelling reserva %s: %s", reserva_id, exc)
+            raise ServicesAPIError(str(exc)) from exc
+        return resp.json()
+
+    async def upload_comprobante(
+        self, socio_id: str, cuota_id: str, file_bytes: bytes, filename: str, content_type: str
+    ) -> dict:
+        try:
+            resp = await self._client.post(
+                f"/socios/{socio_id}/cuotas/{cuota_id}/comprobantes",
+                files={"archivo": (filename, file_bytes, content_type)},
+                headers=self._auth_headers(),
+            )
+        except httpx.HTTPError as exc:
+            logger.error(
+                "Error uploading comprobante (socio=%s, cuota=%s): %s",
+                socio_id,
+                cuota_id,
+                exc,
+            )
+            raise ServicesAPIError(str(exc)) from exc
+
+        if resp.status_code == 400:
+            body = resp.json()
+            raise ServicesAPIBadRequest(body.get("mensaje", "Error al subir el comprobante."))
+
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "Services API error uploading comprobante (socio=%s, cuota=%s): %s",
+                socio_id,
+                cuota_id,
+                exc,
+            )
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 

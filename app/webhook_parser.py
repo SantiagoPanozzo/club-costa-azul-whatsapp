@@ -49,6 +49,9 @@ class IncomingMessage:
     timestamp: Optional[str] = None
     contact_name: Optional[str] = None
     interactive_title: Optional[str] = None
+    media_id: Optional[str] = None
+    media_mime_type: Optional[str] = None
+    media_filename: Optional[str] = None
 
 
 def extract_messages(payload: dict) -> list[IncomingMessage]:
@@ -77,6 +80,10 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
                 interactive_id = None
                 interactive_title = None
 
+                media_id = None
+                media_mime_type = None
+                media_filename = None
+
                 if msg_type == "text":
                     text = msg.get("text", {}).get("body")
                 elif msg_type == "interactive":
@@ -90,6 +97,15 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
                         reply = interactive.get("button_reply", {})
                         interactive_id = reply.get("id")
                         interactive_title = reply.get("title")
+                elif msg_type == "image":
+                    image = msg.get("image", {})
+                    media_id = image.get("id")
+                    media_mime_type = image.get("mime_type")
+                elif msg_type == "document":
+                    document = msg.get("document", {})
+                    media_id = document.get("id")
+                    media_mime_type = document.get("mime_type")
+                    media_filename = document.get("filename")
 
                 results.append(
                     IncomingMessage(
@@ -101,6 +117,9 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
                         timestamp=msg.get("timestamp"),
                         contact_name=contact_name,
                         interactive_title=interactive_title,
+                        media_id=media_id,
+                        media_mime_type=media_mime_type,
+                        media_filename=media_filename,
                     )
                 )
 
