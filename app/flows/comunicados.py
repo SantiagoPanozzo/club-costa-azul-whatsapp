@@ -50,10 +50,10 @@ class ComunicadosFlow(BaseFlow[ComunicadosState]):
         lines = ["*Últimos comunicados del club:*", ""]
         for n in noticias[:5]:
             titulo = n.get("titulo", "Sin título")
-            fecha = n.get("fechaPublicacion", "")
+            fecha = n.get("fecha", "")
             if fecha and len(fecha) >= 10:
                 fecha = fecha[:10]
-            resumen = n.get("resumen") or n.get("contenido", "")
+            resumen = n.get("descripcion", "")
             if len(resumen) > 120:
                 resumen = resumen[:117] + "..."
             lines.append(f"📌 *{titulo}*")
