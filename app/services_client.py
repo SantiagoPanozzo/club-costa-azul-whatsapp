@@ -103,6 +103,18 @@ class ServicesClient:
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
+    async def delete_inscripcion(self, inscripcion_id: str) -> dict:
+        try:
+            resp = await self._client.delete(
+                f"/inscripciones/{inscripcion_id}",
+                headers=self._auth_headers(),
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.error("Error cancelling inscripcion %s: %s", inscripcion_id, exc)
+            raise ServicesAPIError(str(exc)) from exc
+        return resp.json()
+
     async def get_socio_detalle(self, socio_id: str) -> dict | None:
         try:
             resp = await self._client.get(f"/socios/{socio_id}", headers=self._auth_headers())
@@ -155,11 +167,22 @@ class ServicesClient:
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
-    async def post_reserva(self, socio_id: str, espacio_id: str, fecha: str) -> dict:
+    async def post_reserva(
+        self, socio_id: str, espacio_id: str, fecha: str,
+        hora_inicio: str, hora_fin: str, cant_personas: int, motivo: str,
+    ) -> dict:
         try:
             resp = await self._client.post(
-                "/reservas/admin",
-                json={"socioId": socio_id, "espacioId": espacio_id, "fecha": fecha},
+                "/reservas",
+                json={
+                    "socioId": socio_id,
+                    "espacioId": espacio_id,
+                    "fecha": fecha,
+                    "horaInicio": hora_inicio,
+                    "horaFin": hora_fin,
+                    "cantPersonas": cant_personas,
+                    "motivo": motivo,
+                },
                 headers=self._auth_headers(),
             )
         except httpx.HTTPError as exc:
@@ -189,12 +212,25 @@ class ServicesClient:
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
-    async def delete_reserva(self, reserva_id: str) -> dict:
+    async def delete_reserva(self, reserva_id: str, socio_id: str) -> dict:
         try:
-            resp = await self._client.delete(f"/reservas/{reserva_id}/admin", headers=self._auth_headers())
+            resp = await self._client.delete(
+                f"/reservas/{reserva_id}",
+                params={"socioId": socio_id},
+                headers=self._auth_headers(),
+            )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
-            logger.error("Error deleting reserva %s: %s", reserva_id, exc)
+            logger.error("Error cancelling reserva %s: %s", reserva_id, exc)
+            raise ServicesAPIError(str(exc)) from exc
+        return resp.json()
+
+    async def get_noticias(self) -> list[dict]:
+        try:
+            resp = await self._client.get("/noticias", params={"soloPublicadas": "true"})
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.error("Error fetching noticias: %s", exc)
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
@@ -251,6 +287,21 @@ class ServicesClient:
                 socio_id,
                 evento_id,
                 exc,
+            )
+            raise ServicesAPIError(str(exc)) from exc
+        return resp.json()
+
+    async def delete_inscripcion_evento(self, evento_id: str, inscripcion_id: str) -> dict:
+        try:
+            resp = await self._client.delete(
+                f"/eventos/{evento_id}/inscripciones/{inscripcion_id}",
+                headers=self._auth_headers(),
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.error(
+                "Error withdrawing from evento %s inscription %s: %s",
+                evento_id, inscripcion_id, exc,
             )
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
