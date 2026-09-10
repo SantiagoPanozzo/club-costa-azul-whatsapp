@@ -13,6 +13,26 @@ from .base import BaseFlow, FlowResult
 logger = logging.getLogger(__name__)
 
 GENERIC_ERROR = "Uy, tuvimos un problema técnico. Probá de nuevo en unos minutos."
+
+_DIA_LABELS = {0: "Dom", 1: "Lun", 2: "Mar", 3: "Mié", 4: "Jue", 5: "Vie", 6: "Sáb"}
+
+
+def _format_horario(act: dict) -> str:
+    dias = act.get("diasSemana") or []
+    dias_str = ", ".join(_DIA_LABELS.get(d, str(d)) for d in dias) if dias else ""
+    inicio = act.get("horaInicio") or ""
+    fin = act.get("horaFin") or ""
+    if inicio and fin:
+        # Strip seconds if present (e.g. "10:00:00" -> "10:00")
+        inicio = inicio[:5] if len(inicio) > 5 else inicio
+        fin = fin[:5] if len(fin) > 5 else fin
+        horario = f"{inicio}-{fin}"
+    elif inicio:
+        horario = inicio[:5] if len(inicio) > 5 else inicio
+    else:
+        horario = ""
+    parts = [p for p in (dias_str, horario) if p]
+    return " ".join(parts) if parts else "Horario no definido"
 ACTIVITY_PREFIX = "act_"
 CONFIRM_YES = "confirm_yes"
 CONFIRM_NO = "confirm_no"
@@ -106,7 +126,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
             for i in activas:
                 act = actividades_by_id.get(i.get("actividadId"))
                 if act:
-                    lines.append(f"- {act['nombre']} ({act['diasHorario']})")
+                    lines.append(f"- {act['nombre']} ({_format_horario(act)})")
                 else:
                     lines.append("- Actividad (detalle no disponible)")
             text = "Ya estás inscripto/a en:\n\n" + "\n".join(lines)
@@ -138,7 +158,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
             {
                 "id": f"{ACTIVITY_PREFIX}{a['id']}",
                 "title": str(a["nombre"]),
-                "description": f"{a['diasHorario']} - ${a['costo']:.0f}",
+                "description": f"{_format_horario(a)} - ${float(str(a['costo'])):.0f}",
             }
             for a in disponibles[:10]
         ]
@@ -176,7 +196,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
             phone,
             body=(
                 f"¿Confirmás tu inscripción a *{activity['nombre']}*?\n"
-                f"Horario: {activity['diasHorario']}\n"
+                f"Horario: {_format_horario(activity)}\n"
                 f"Costo: ${float(str(activity['costo'])):.0f}"
             ),
             buttons=[(CONFIRM_YES, "Confirmar"), (CONFIRM_NO, "Cancelar")],
@@ -251,7 +271,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
             rows.append({
                 "id": f"{CANCEL_PREFIX}{i['id']}",
                 "title": nombre,
-                "description": act.get("diasHorario", "") if act else "",
+                "description": _format_horario(act) if act else "",
             })
 
         await whatsapp_client.send_list(
