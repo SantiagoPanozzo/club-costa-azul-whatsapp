@@ -33,6 +33,8 @@ def _format_horario(act: dict) -> str:
         horario = ""
     parts = [p for p in (dias_str, horario) if p]
     return " ".join(parts) if parts else "Horario no definido"
+
+
 ACTIVITY_PREFIX = "act_"
 CONFIRM_YES = "confirm_yes"
 CONFIRM_NO = "confirm_no"
@@ -100,9 +102,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
         if msg.interactive_id == ACTION_CANCEL:
             return await self._show_cancellable(phone, session, state)
 
-        await whatsapp_client.send_text(
-            phone, "Por favor, elegí Inscribirme o Cancelar inscripción.", session=session
-        )
+        await whatsapp_client.send_text(phone, "Por favor, elegí Inscribirme o Cancelar inscripción.", session=session)
         return FlowResult.CONTINUE
 
     async def _show_activities(self, phone: str, session: Session, state: ActivitiesState) -> None:
@@ -238,9 +238,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
         await whatsapp_client.send_text(phone, "Por favor, tocá Confirmar o Cancelar.", session=session)
         return FlowResult.CONTINUE
 
-    async def _show_cancellable(
-        self, phone: str, session: Session, state: ActivitiesState
-    ) -> FlowResult:
+    async def _show_cancellable(self, phone: str, session: Session, state: ActivitiesState) -> FlowResult:
         socio = session.socio
         assert socio is not None
         socio_id = str(socio["id"])
@@ -256,9 +254,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
         activas = [i for i in inscripciones if i.get("estado") == "Activa"]
 
         if not activas:
-            await whatsapp_client.send_text(
-                phone, "No tenés inscripciones activas para cancelar.", session=session
-            )
+            await whatsapp_client.send_text(phone, "No tenés inscripciones activas para cancelar.", session=session)
             return FlowResult.DONE
 
         state.active_inscriptions = {str(i["id"]): i for i in activas}
@@ -268,11 +264,13 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
         for i in activas[:10]:
             act = actividades_by_id.get(i.get("actividadId"))
             nombre = str(act["nombre"]) if act else "Actividad"
-            rows.append({
-                "id": f"{CANCEL_PREFIX}{i['id']}",
-                "title": nombre,
-                "description": _format_horario(act) if act else "",
-            })
+            rows.append(
+                {
+                    "id": f"{CANCEL_PREFIX}{i['id']}",
+                    "title": nombre,
+                    "description": _format_horario(act) if act else "",
+                }
+            )
 
         await whatsapp_client.send_list(
             to=phone,
@@ -289,17 +287,13 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
     ) -> FlowResult:
         iid = msg.interactive_id or ""
         if not iid.startswith(CANCEL_PREFIX):
-            await whatsapp_client.send_text(
-                phone, "Por favor, elegí una inscripción de la lista.", session=session
-            )
+            await whatsapp_client.send_text(phone, "Por favor, elegí una inscripción de la lista.", session=session)
             return FlowResult.CONTINUE
 
         insc_id = iid[len(CANCEL_PREFIX) :]
         insc = state.active_inscriptions.get(insc_id)
         if not insc:
-            await whatsapp_client.send_text(
-                phone, "Esa inscripción ya no está disponible.", session=session
-            )
+            await whatsapp_client.send_text(phone, "Esa inscripción ya no está disponible.", session=session)
             return FlowResult.DONE
 
         state.selected_inscription = insc

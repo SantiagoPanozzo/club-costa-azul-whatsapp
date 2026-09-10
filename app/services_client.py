@@ -168,8 +168,14 @@ class ServicesClient:
         return resp.json()
 
     async def post_reserva(
-        self, socio_id: str, espacio_id: str, fecha: str,
-        hora_inicio: str, hora_fin: str, cant_personas: int, motivo: str,
+        self,
+        socio_id: str,
+        espacio_id: str,
+        fecha: str,
+        hora_inicio: str,
+        hora_fin: str,
+        cant_personas: int,
+        motivo: str,
     ) -> dict:
         try:
             resp = await self._client.post(
@@ -301,7 +307,9 @@ class ServicesClient:
         except httpx.HTTPError as exc:
             logger.error(
                 "Error withdrawing from evento %s inscription %s: %s",
-                evento_id, inscripcion_id, exc,
+                evento_id,
+                inscripcion_id,
+                exc,
             )
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()

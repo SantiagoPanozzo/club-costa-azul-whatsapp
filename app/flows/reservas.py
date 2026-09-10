@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from enum import StrEnum
 
 from .. import services_client as svc
+from ..date_parser import parse_flexible_date
 from ..services_client import ServicesAPIConflict, ServicesAPIError
 from ..state import Session
 from ..storing_client import storing_client as whatsapp_client
@@ -25,18 +26,7 @@ CANCEL_YES = "cancel_confirm"
 CANCEL_NO = "cancel_deny"
 
 MAX_DAYS_AHEAD = 90
-DATE_FORMATS = ["%d/%m/%Y", "%d-%m-%Y"]
 TIME_FORMATS = ["%H:%M", "%H.%M", "%H"]
-
-
-def _parse_date(text: str) -> date | None:
-    text = text.strip()
-    for fmt in DATE_FORMATS:
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
-            continue
-    return None
 
 
 def _parse_time(text: str) -> str | None:
@@ -191,7 +181,7 @@ class ReservasFlow(BaseFlow[ReservasState]):
         state.step = ReservasStep.AWAITING_DATE
         await whatsapp_client.send_text(
             phone,
-            "Escribí la fecha para tu reserva en formato DD/MM/AAAA (ej: 15/09/2026):",
+            "Escribí la fecha de tu reserva (ej: 15/09/2026, 15/9, 15):",
             session=session,
         )
         return FlowResult.CONTINUE
@@ -202,16 +192,16 @@ class ReservasFlow(BaseFlow[ReservasState]):
         if not msg.text:
             await whatsapp_client.send_text(
                 phone,
-                "Por favor, escribí la fecha en formato DD/MM/AAAA (ej: 15/09/2026).",
+                "Por favor, escribí la fecha de tu reserva (ej: 15/09/2026, 15/9, 15).",
                 session=session,
             )
             return FlowResult.CONTINUE
 
-        parsed = _parse_date(msg.text)
+        parsed = parse_flexible_date(msg.text)
         if parsed is None:
             await whatsapp_client.send_text(
                 phone,
-                "No pude entender esa fecha. Usá el formato DD/MM/AAAA (ej: 15/09/2026).",
+                "No pude entender esa fecha. Intentá con algo como 15/09/2026, 15/9 o simplemente 15.",
                 session=session,
             )
             return FlowResult.CONTINUE
@@ -336,8 +326,13 @@ class ReservasFlow(BaseFlow[ReservasState]):
 
             try:
                 await svc.services_client.post_reserva(
-                    str(socio["id"]), str(espacio["id"]), state.selected_date,
-                    state.start_time, state.end_time, state.cant_personas, state.motivo,
+                    str(socio["id"]),
+                    str(espacio["id"]),
+                    state.selected_date,
+                    state.start_time,
+                    state.end_time,
+                    state.cant_personas,
+                    state.motivo,
                 )
             except ServicesAPIConflict as exc:
                 await whatsapp_client.send_text(phone, str(exc), session=session)
