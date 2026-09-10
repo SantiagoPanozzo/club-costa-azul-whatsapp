@@ -41,9 +41,7 @@ class ComunicadosFlow(BaseFlow[ComunicadosState]):
             return
 
         if not noticias:
-            await whatsapp_client.send_text(
-                phone, "No hay comunicados publicados en este momento.", session=session
-            )
+            await whatsapp_client.send_text(phone, "No hay comunicados publicados en este momento.", session=session)
             session.end_flow()
             return
 

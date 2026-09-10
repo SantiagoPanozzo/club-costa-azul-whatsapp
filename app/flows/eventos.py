@@ -243,9 +243,7 @@ class EventosFlow(BaseFlow[EventosState]):
         await whatsapp_client.send_text(phone, "Por favor, tocá Inscribirme o Volver.", session=session)
         return FlowResult.CONTINUE
 
-    async def _show_withdrawable(
-        self, phone: str, session: Session, state: EventosState
-    ) -> FlowResult:
+    async def _show_withdrawable(self, phone: str, session: Session, state: EventosState) -> FlowResult:
         socio = session.socio
         assert socio is not None
         socio_id = str(socio["id"])
@@ -263,9 +261,7 @@ class EventosFlow(BaseFlow[EventosState]):
         activas = [i for i in inscripciones if i.get("estado") != "Cancelada"]
 
         if not activas:
-            await whatsapp_client.send_text(
-                phone, "No tenés inscripciones a eventos para cancelar.", session=session
-            )
+            await whatsapp_client.send_text(phone, "No tenés inscripciones a eventos para cancelar.", session=session)
             return FlowResult.DONE
 
         state.enrolled_events = {}
@@ -331,9 +327,7 @@ class EventosFlow(BaseFlow[EventosState]):
             info = state.selected_withdrawal
             assert info is not None
             try:
-                await svc.services_client.delete_inscripcion_evento(
-                    str(info["eventoId"]), str(info["inscripcionId"])
-                )
+                await svc.services_client.delete_inscripcion_evento(str(info["eventoId"]), str(info["inscripcionId"]))
             except ServicesAPIError:
                 logger.warning(
                     "Error withdrawing from evento %s inscription %s",
