@@ -55,6 +55,11 @@ MENU_OPTIONS: list[dict[str, str]] = [
         "title": "Comunicados",
         "description": "Novedades y comunicados",
     },
+    {
+        "id": "ayuda",
+        "title": "Ayuda",
+        "description": "Contactar al club o pedir ayuda",
+    },
 ]
 
 GLOBAL_KEYWORDS: dict[str, str] = {
@@ -62,43 +67,103 @@ GLOBAL_KEYWORDS: dict[str, str] = {
     "menú": "menu",
     "inicio": "menu",
     "volver": "menu",
+    "ayuda": "ayuda",
+    "help": "ayuda",
 }
+
+_TEXT_TO_FLOW: dict[str, str] = {
+    "1": "activities",
+    "2": "cuotas",
+    "3": "reservas",
+    "4": "eventos",
+    "5": "datos_personales",
+    "6": "comunicados",
+    "7": "ayuda",
+    "actividades": "activities",
+    "cuotas": "cuotas",
+    "pagos": "cuotas",
+    "reservas": "reservas",
+    "eventos": "eventos",
+    "datos": "datos_personales",
+    "datos personales": "datos_personales",
+    "comunicados": "comunicados",
+    "ayuda": "ayuda",
+    "help": "ayuda",
+}
+
+HELP_TEXT = (
+    "Si necesitás ayuda o tenés algún problema, podés comunicarte con "
+    "la administración del Club Costa Azul:\n\n"
+    "📞 Teléfono: (consultar en recepción)\n"
+    "📧 Email: clubcostaazul@gmail.com\n"
+    "🌐 Web: https://clubcostaazul.com\n\n"
+    "Escribí *menu* para volver al menú principal."
+)
 
 
 async def handle_message(incoming: IncomingMessage) -> None:
     phone = incoming.phone
-    session = sessions.get(phone)
 
-    await message_store.store_incoming(incoming, session)
+    async with sessions.lock_for(phone):
+        session = sessions.get(phone)
 
-    if session.socio is None:
-        await _sign_in(phone, session, incoming)
-        return
+        is_new = await message_store.store_incoming(incoming, session)
+        if not is_new:
+            return
 
-    if _handle_global_keyword(incoming, session):
+        if session.socio is None:
+            await _sign_in(phone, session, incoming)
+            return
+
+        global_action = _handle_global_keyword(incoming, session)
+        if global_action == "menu":
+            await _send_main_menu(phone, session)
+            return
+        if global_action == "ayuda":
+            session.end_flow()
+            await whatsapp_client.send_text(phone, HELP_TEXT, session=session)
+            return
+
+        if session.active_flow is not None:
+            await _dispatch_to_flow(phone, session, incoming)
+            return
+
+        if incoming.interactive_id and incoming.interactive_id == "ayuda":
+            await whatsapp_client.send_text(phone, HELP_TEXT, session=session)
+            return
+
+        if incoming.interactive_id and incoming.interactive_id in FLOW_REGISTRY:
+            await _enter_flow(phone, session, incoming.interactive_id)
+            return
+
+        text_flow = _match_text_to_flow(incoming)
+        if text_flow == "ayuda":
+            await whatsapp_client.send_text(phone, HELP_TEXT, session=session)
+            return
+        if text_flow:
+            await _enter_flow(phone, session, text_flow)
+            return
+
         await _send_main_menu(phone, session)
-        return
-
-    if session.active_flow is not None:
-        await _dispatch_to_flow(phone, session, incoming)
-        return
-
-    if incoming.interactive_id and incoming.interactive_id in FLOW_REGISTRY:
-        await _enter_flow(phone, session, incoming.interactive_id)
-        return
-
-    await _send_main_menu(phone, session)
 
 
-def _handle_global_keyword(incoming: IncomingMessage, session: Session) -> bool:
+def _handle_global_keyword(incoming: IncomingMessage, session: Session) -> str | None:
+    """Return the action name if a global keyword was matched, else None."""
     if incoming.text is None:
-        return False
+        return None
     keyword = incoming.text.strip().lower()
     action = GLOBAL_KEYWORDS.get(keyword)
-    if action == "menu":
+    if action:
         session.end_flow()
-        return True
-    return False
+        return action
+    return None
+
+
+def _match_text_to_flow(incoming: IncomingMessage) -> str | None:
+    """Match typed text (number or name) to a flow when no flow is active."""
+    if incoming.text is None:
+        return None
+    return _TEXT_TO_FLOW.get(incoming.text.strip().lower())
 
 
 async def _sign_in(phone: str, session: Session, incoming: IncomingMessage) -> None:
@@ -141,6 +206,8 @@ async def _enter_flow(phone: str, session: Session, flow_name: str) -> None:
     flow = FLOW_REGISTRY[flow_name]
     session.active_flow = flow_name
     await flow.enter(phone, session)
+    if session.active_flow is None:
+        await _send_main_menu(phone, session)
 
 
 async def _dispatch_to_flow(phone: str, session: Session, incoming: IncomingMessage) -> None:
