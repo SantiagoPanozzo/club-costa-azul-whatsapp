@@ -136,7 +136,7 @@ class CuotasFlow(BaseFlow[CuotasState]):
                 "id": f"{CUOTA_PREFIX}{cid}",
                 "title": str(c.get("periodo", "")),
                 "description": f"${float(str(c.get('monto', 0))):.0f}"
-                + "- {ESTADO_LABELS.get(c.get('estado', ''), c.get('estado', ''))}",
+                + f"- {ESTADO_LABELS.get(c.get('estado', ''), c.get('estado', ''))}",
             }
             for cid, c in list(state.pending_cuotas.items())[:10]
         ]
