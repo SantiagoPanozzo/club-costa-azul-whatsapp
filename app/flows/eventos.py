@@ -18,17 +18,28 @@ EVENT_PREFIX = "evt_"
 CONFIRM_YES = "evt_confirm_yes"
 CONFIRM_NO = "evt_confirm_no"
 
+ACTION_BROWSE = "evt_browse"
+ACTION_WITHDRAW = "evt_withdraw"
+WITHDRAW_PREFIX = "evtw_"
+WITHDRAW_YES = "evt_withdraw_yes"
+WITHDRAW_NO = "evt_withdraw_no"
+
 
 class EventosStep(StrEnum):
+    AWAITING_ACTION = "awaiting_action"
     AWAITING_CHOICE = "awaiting_choice"
     AWAITING_CONFIRM = "awaiting_confirm"
+    AWAITING_WITHDRAW_CHOICE = "awaiting_withdraw_choice"
+    AWAITING_WITHDRAW_CONFIRM = "awaiting_withdraw_confirm"
 
 
 @dataclass
 class EventosState:
-    step: EventosStep = EventosStep.AWAITING_CHOICE
+    step: EventosStep = EventosStep.AWAITING_ACTION
     available_events: dict[str, dict[str, object]] = field(default_factory=dict)
     selected_event: dict[str, object] | None = None
+    enrolled_events: dict[str, dict[str, object]] = field(default_factory=dict)
+    selected_withdrawal: dict[str, object] | None = None
 
 
 class EventosFlow(BaseFlow[EventosState]):
@@ -38,17 +49,41 @@ class EventosFlow(BaseFlow[EventosState]):
     async def enter(self, phone: str, session: Session) -> None:
         state = self.create_state()
         session.flow_state = state
-        await self._show_events(phone, session, state)
+        state.step = EventosStep.AWAITING_ACTION
+        await whatsapp_client.send_buttons(
+            phone,
+            body="¿Qué querés hacer?",
+            buttons=[(ACTION_BROWSE, "Ver eventos"), (ACTION_WITHDRAW, "Cancelar inscripción")],
+            session=session,
+        )
 
     async def handle(self, phone: str, session: Session, msg: IncomingMessage) -> FlowResult:
         state = self.get_state(session)
 
+        if state.step == EventosStep.AWAITING_ACTION:
+            return await self._handle_action(phone, session, state, msg)
         if state.step == EventosStep.AWAITING_CHOICE:
             return await self._handle_choice(phone, session, state, msg)
         if state.step == EventosStep.AWAITING_CONFIRM:
             return await self._handle_confirm(phone, session, state, msg)
+        if state.step == EventosStep.AWAITING_WITHDRAW_CHOICE:
+            return await self._handle_withdraw_choice(phone, session, state, msg)
+        if state.step == EventosStep.AWAITING_WITHDRAW_CONFIRM:
+            return await self._handle_withdraw_confirm(phone, session, state, msg)
 
         return FlowResult.DONE
+
+    async def _handle_action(
+        self, phone: str, session: Session, state: EventosState, msg: IncomingMessage
+    ) -> FlowResult:
+        if msg.interactive_id == ACTION_BROWSE:
+            await self._show_events(phone, session, state)
+            return FlowResult.CONTINUE
+        if msg.interactive_id == ACTION_WITHDRAW:
+            return await self._show_withdrawable(phone, session, state)
+
+        await whatsapp_client.send_text(phone, "Por favor, elegí Ver eventos o Cancelar inscripción.", session=session)
+        return FlowResult.CONTINUE
 
     async def _show_events(self, phone: str, session: Session, state: EventosState) -> None:
         socio = session.socio
@@ -206,4 +241,118 @@ class EventosFlow(BaseFlow[EventosState]):
             return FlowResult.DONE
 
         await whatsapp_client.send_text(phone, "Por favor, tocá Inscribirme o Volver.", session=session)
+        return FlowResult.CONTINUE
+
+    async def _show_withdrawable(
+        self, phone: str, session: Session, state: EventosState
+    ) -> FlowResult:
+        socio = session.socio
+        assert socio is not None
+        socio_id = str(socio["id"])
+
+        try:
+            inscripciones = await svc.services_client.get_inscripciones_evento_socio(socio_id)
+            eventos = await svc.services_client.get_eventos()
+        except ServicesAPIError:
+            logger.warning("Error fetching evento inscriptions for socio %s", socio_id)
+            traceback.print_exc()
+            await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
+            return FlowResult.DONE
+
+        eventos_by_id: dict[object, dict[str, object]] = {e["id"]: e for e in eventos}
+        activas = [i for i in inscripciones if i.get("estado") != "Cancelada"]
+
+        if not activas:
+            await whatsapp_client.send_text(
+                phone, "No tenés inscripciones a eventos para cancelar.", session=session
+            )
+            return FlowResult.DONE
+
+        state.enrolled_events = {}
+        for i in activas:
+            key = str(i.get("id", ""))
+            evento = eventos_by_id.get(i.get("eventoId"))
+            state.enrolled_events[key] = {
+                "inscripcionId": i.get("id"),
+                "eventoId": i.get("eventoId"),
+                "eventoNombre": evento.get("nombre", "Evento") if evento else "Evento",
+                "eventoFecha": evento.get("fecha", "") if evento else "",
+            }
+
+        state.step = EventosStep.AWAITING_WITHDRAW_CHOICE
+
+        note = " (mostrando las primeras 10)" if len(activas) > 10 else ""
+        rows = [
+            {
+                "id": f"{WITHDRAW_PREFIX}{key}",
+                "title": str(info["eventoNombre"]),
+                "description": str(info.get("eventoFecha", "")),
+            }
+            for key, info in list(state.enrolled_events.items())[:10]
+        ]
+        await whatsapp_client.send_list(
+            to=phone,
+            body=f"Elegí la inscripción que querés cancelar{note}:",
+            button_text="Ver inscripciones",
+            rows=rows,
+            section_title="Tus inscripciones",
+            session=session,
+        )
+        return FlowResult.CONTINUE
+
+    async def _handle_withdraw_choice(
+        self, phone: str, session: Session, state: EventosState, msg: IncomingMessage
+    ) -> FlowResult:
+        iid = msg.interactive_id or ""
+        if not iid.startswith(WITHDRAW_PREFIX):
+            await whatsapp_client.send_text(phone, "Por favor, elegí una inscripción de la lista.", session=session)
+            return FlowResult.CONTINUE
+
+        key = iid[len(WITHDRAW_PREFIX) :]
+        enrolled = state.enrolled_events.get(key)
+        if not enrolled:
+            await whatsapp_client.send_text(phone, "Esa inscripción ya no está disponible.", session=session)
+            return FlowResult.DONE
+
+        state.selected_withdrawal = enrolled
+        state.step = EventosStep.AWAITING_WITHDRAW_CONFIRM
+        await whatsapp_client.send_buttons(
+            phone,
+            body=f"¿Confirmás que querés cancelar tu inscripción a *{enrolled['eventoNombre']}*?",
+            buttons=[(WITHDRAW_YES, "Sí, cancelar"), (WITHDRAW_NO, "Volver")],
+            session=session,
+        )
+        return FlowResult.CONTINUE
+
+    async def _handle_withdraw_confirm(
+        self, phone: str, session: Session, state: EventosState, msg: IncomingMessage
+    ) -> FlowResult:
+        if msg.interactive_id == WITHDRAW_YES:
+            info = state.selected_withdrawal
+            assert info is not None
+            try:
+                await svc.services_client.delete_inscripcion_evento(
+                    str(info["eventoId"]), str(info["inscripcionId"])
+                )
+            except ServicesAPIError:
+                logger.warning(
+                    "Error withdrawing from evento %s inscription %s",
+                    info["eventoId"],
+                    info["inscripcionId"],
+                )
+                traceback.print_exc()
+                await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
+                return FlowResult.DONE
+
+            await whatsapp_client.send_text(
+                phone,
+                f"Inscripción a *{info['eventoNombre']}* cancelada.",
+                session=session,
+            )
+            return FlowResult.DONE
+
+        if msg.interactive_id == WITHDRAW_NO:
+            return FlowResult.DONE
+
+        await whatsapp_client.send_text(phone, "Por favor, tocá Sí, cancelar o Volver.", session=session)
         return FlowResult.CONTINUE

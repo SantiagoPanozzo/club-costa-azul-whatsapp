@@ -26,6 +26,7 @@ CANCEL_NO = "cancel_deny"
 
 MAX_DAYS_AHEAD = 90
 DATE_FORMATS = ["%d/%m/%Y", "%d-%m-%Y"]
+TIME_FORMATS = ["%H:%M", "%H.%M", "%H"]
 
 
 def _parse_date(text: str) -> date | None:
@@ -38,10 +39,25 @@ def _parse_date(text: str) -> date | None:
     return None
 
 
+def _parse_time(text: str) -> str | None:
+    text = text.strip()
+    for fmt in TIME_FORMATS:
+        try:
+            t = datetime.strptime(text, fmt).time()
+            return t.strftime("%H:%M")
+        except ValueError:
+            continue
+    return None
+
+
 class ReservasStep(StrEnum):
     AWAITING_ACTION = "awaiting_action"
     AWAITING_SPACE = "awaiting_space"
     AWAITING_DATE = "awaiting_date"
+    AWAITING_START_TIME = "awaiting_start_time"
+    AWAITING_END_TIME = "awaiting_end_time"
+    AWAITING_PEOPLE = "awaiting_people"
+    AWAITING_REASON = "awaiting_reason"
     AWAITING_CONFIRM = "awaiting_confirm"
     VIEWING_RESERVAS = "viewing_reservas"
     AWAITING_CANCEL_CONFIRM = "awaiting_cancel_confirm"
@@ -53,6 +69,10 @@ class ReservasState:
     available_spaces: dict[str, dict[str, object]] = field(default_factory=dict)
     selected_space: dict[str, object] | None = None
     selected_date: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    cant_personas: int | None = None
+    motivo: str | None = None
     reservas: dict[str, dict[str, object]] = field(default_factory=dict)
     selected_reserva: dict[str, object] | None = None
 
@@ -81,6 +101,14 @@ class ReservasFlow(BaseFlow[ReservasState]):
             return await self._handle_space(phone, session, state, msg)
         if state.step == ReservasStep.AWAITING_DATE:
             return await self._handle_date(phone, session, state, msg)
+        if state.step == ReservasStep.AWAITING_START_TIME:
+            return await self._handle_start_time(phone, session, state, msg)
+        if state.step == ReservasStep.AWAITING_END_TIME:
+            return await self._handle_end_time(phone, session, state, msg)
+        if state.step == ReservasStep.AWAITING_PEOPLE:
+            return await self._handle_people(phone, session, state, msg)
+        if state.step == ReservasStep.AWAITING_REASON:
+            return await self._handle_reason(phone, session, state, msg)
         if state.step == ReservasStep.AWAITING_CONFIRM:
             return await self._handle_confirm(phone, session, state, msg)
         if state.step == ReservasStep.VIEWING_RESERVAS:
@@ -206,22 +234,95 @@ class ReservasFlow(BaseFlow[ReservasState]):
             return FlowResult.CONTINUE
 
         state.selected_date = parsed.isoformat()
+        state.step = ReservasStep.AWAITING_START_TIME
+        await whatsapp_client.send_text(
+            phone,
+            "Escribí la hora de inicio (ej: 10:00):",
+            session=session,
+        )
+        return FlowResult.CONTINUE
+
+    async def _handle_start_time(
+        self, phone: str, session: Session, state: ReservasState, msg: IncomingMessage
+    ) -> FlowResult:
+        if not msg.text:
+            await whatsapp_client.send_text(phone, "Escribí la hora de inicio (ej: 10:00).", session=session)
+            return FlowResult.CONTINUE
+        parsed = _parse_time(msg.text)
+        if parsed is None:
+            await whatsapp_client.send_text(
+                phone, "No pude entender la hora. Usá formato HH:MM (ej: 10:00).", session=session
+            )
+            return FlowResult.CONTINUE
+        state.start_time = parsed
+        state.step = ReservasStep.AWAITING_END_TIME
+        await whatsapp_client.send_text(phone, "Escribí la hora de fin (ej: 12:00):", session=session)
+        return FlowResult.CONTINUE
+
+    async def _handle_end_time(
+        self, phone: str, session: Session, state: ReservasState, msg: IncomingMessage
+    ) -> FlowResult:
+        if not msg.text:
+            await whatsapp_client.send_text(phone, "Escribí la hora de fin (ej: 12:00).", session=session)
+            return FlowResult.CONTINUE
+        parsed = _parse_time(msg.text)
+        if parsed is None:
+            await whatsapp_client.send_text(
+                phone, "No pude entender la hora. Usá formato HH:MM (ej: 12:00).", session=session
+            )
+            return FlowResult.CONTINUE
+        if parsed <= state.start_time:
+            await whatsapp_client.send_text(
+                phone, "La hora de fin debe ser posterior a la de inicio. Escribí otra hora.", session=session
+            )
+            return FlowResult.CONTINUE
+        state.end_time = parsed
+        state.step = ReservasStep.AWAITING_PEOPLE
+        await whatsapp_client.send_text(phone, "¿Cuántas personas van a asistir?", session=session)
+        return FlowResult.CONTINUE
+
+    async def _handle_people(
+        self, phone: str, session: Session, state: ReservasState, msg: IncomingMessage
+    ) -> FlowResult:
+        if not msg.text or not msg.text.strip().isdigit():
+            await whatsapp_client.send_text(phone, "Escribí un número (ej: 4).", session=session)
+            return FlowResult.CONTINUE
+        cant = int(msg.text.strip())
+        if cant < 1 or cant > 500:
+            await whatsapp_client.send_text(phone, "Ingresá un número válido de personas.", session=session)
+            return FlowResult.CONTINUE
+        state.cant_personas = cant
+        state.step = ReservasStep.AWAITING_REASON
+        await whatsapp_client.send_text(
+            phone, "¿Cuál es el motivo de la reserva? (ej: cumpleaños, reunión, entrenamiento)", session=session
+        )
+        return FlowResult.CONTINUE
+
+    async def _handle_reason(
+        self, phone: str, session: Session, state: ReservasState, msg: IncomingMessage
+    ) -> FlowResult:
+        if not msg.text or not msg.text.strip():
+            await whatsapp_client.send_text(phone, "Escribí el motivo de la reserva.", session=session)
+            return FlowResult.CONTINUE
+        state.motivo = msg.text.strip()
+        state.step = ReservasStep.AWAITING_CONFIRM
         espacio = state.selected_space
         assert espacio is not None
-
-        fecha_display = parsed.strftime("%d/%m/%Y")
+        fecha_display = datetime.strptime(state.selected_date, "%Y-%m-%d").strftime("%d/%m/%Y")
         await whatsapp_client.send_buttons(
             phone,
             body=(
                 f"¿Confirmás tu reserva?\n\n"
                 f"📍 Espacio: *{espacio['nombre']}*\n"
                 f"📅 Fecha: {fecha_display}\n"
+                f"🕐 Horario: {state.start_time} - {state.end_time}\n"
+                f"👥 Personas: {state.cant_personas}\n"
+                f"📝 Motivo: {state.motivo}\n"
                 f"💲 Costo: ${float(str(espacio.get('costo', 0))):.0f}"
             ),
             buttons=[(CONFIRM_YES, "Confirmar"), (CONFIRM_NO, "Cancelar")],
             session=session,
         )
-        state.step = ReservasStep.AWAITING_CONFIRM
         return FlowResult.CONTINUE
 
     async def _handle_confirm(
@@ -234,7 +335,10 @@ class ReservasFlow(BaseFlow[ReservasState]):
             assert socio is not None
 
             try:
-                await svc.services_client.post_reserva(str(socio["id"]), str(espacio["id"]), state.selected_date)
+                await svc.services_client.post_reserva(
+                    str(socio["id"]), str(espacio["id"]), state.selected_date,
+                    state.start_time, state.end_time, state.cant_personas, state.motivo,
+                )
             except ServicesAPIConflict as exc:
                 await whatsapp_client.send_text(phone, str(exc), session=session)
                 return FlowResult.DONE
@@ -252,7 +356,8 @@ class ReservasFlow(BaseFlow[ReservasState]):
             fecha_display = datetime.strptime(state.selected_date, "%Y-%m-%d").strftime("%d/%m/%Y")
             await whatsapp_client.send_text(
                 phone,
-                f"¡Reserva confirmada! *{espacio['nombre']}* para el {fecha_display}.",
+                f"¡Reserva registrada! *{espacio['nombre']}* para el {fecha_display}. "
+                f"Queda pendiente de aprobación por el club.",
                 session=session,
             )
             return FlowResult.DONE
@@ -340,9 +445,11 @@ class ReservasFlow(BaseFlow[ReservasState]):
         if msg.interactive_id == CANCEL_YES:
             reserva = state.selected_reserva
             assert reserva is not None
+            socio = session.socio
+            assert socio is not None
 
             try:
-                await svc.services_client.delete_reserva(str(reserva["id"]))
+                await svc.services_client.delete_reserva(str(reserva["id"]), str(socio["id"]))
             except ServicesAPIError:
                 logger.warning("Error cancelling reserva %s", reserva["id"])
                 traceback.print_exc()

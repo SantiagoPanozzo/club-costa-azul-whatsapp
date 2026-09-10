@@ -3,6 +3,7 @@
 import logging
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from . import message_store
 from .config import settings
@@ -34,6 +35,10 @@ async def webhook(request: Request):
     the upstream webhook service. Always returns 200 so the upstream webhook
     doesn't retry/error regardless of how processing goes downstream.
     """
+    if settings.router_secret:
+        if request.headers.get("X-Router-Secret") != settings.router_secret:
+            return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+
     payload = await request.json()
 
     try:

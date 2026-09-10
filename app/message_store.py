@@ -57,7 +57,8 @@ async def _upsert_conversation(phone: str, contact_name: str | None, session: Se
     return str(result["_id"])
 
 
-async def store_incoming(incoming: IncomingMessage, session: Session) -> None:
+async def store_incoming(incoming: IncomingMessage, session: Session) -> bool:
+    """Store an incoming message. Returns True if this is a new message, False if duplicate."""
     try:
         now = datetime.now(timezone.utc)
         if incoming.timestamp:
@@ -88,8 +89,13 @@ async def store_incoming(incoming: IncomingMessage, session: Session) -> None:
                 "flow": session.active_flow,
             }
         )
-    except Exception:
+        return True
+    except Exception as exc:
+        if "duplicate key" in str(exc).lower() or "E11000" in str(exc):
+            logger.info("Duplicate wamid %s from %s, skipping", incoming.wamid, incoming.phone)
+            return False
         logger.exception("Failed to store incoming message from %s", incoming.phone)
+        return True
 
 
 async def store_outgoing(
