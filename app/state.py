@@ -1,4 +1,4 @@
-import threading
+import asyncio
 from dataclasses import dataclass
 
 
@@ -16,17 +16,21 @@ class Session:
 class SessionStore:
     def __init__(self) -> None:
         self._sessions: dict[str, Session] = {}
-        self._lock: threading.Lock = threading.Lock()
+        self._phone_locks: dict[str, asyncio.Lock] = {}
 
     def get(self, phone: str) -> Session:
-        with self._lock:
-            if phone not in self._sessions:
-                self._sessions[phone] = Session()
-            return self._sessions[phone]
+        if phone not in self._sessions:
+            self._sessions[phone] = Session()
+        return self._sessions[phone]
 
     def reset(self, phone: str) -> None:
-        with self._lock:
-            self._sessions[phone] = Session()
+        self._sessions[phone] = Session()
+
+    def lock_for(self, phone: str) -> asyncio.Lock:
+        """Return a per-phone asyncio lock for serializing message processing."""
+        if phone not in self._phone_locks:
+            self._phone_locks[phone] = asyncio.Lock()
+        return self._phone_locks[phone]
 
 
 sessions = SessionStore()
