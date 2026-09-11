@@ -34,7 +34,7 @@ def _parse_time(text: str) -> str | None:
     for fmt in TIME_FORMATS:
         try:
             t = datetime.strptime(text, fmt).time()
-            return t.strftime("%H:%M")
+            return t.strftime("%H:%M:%S")
         except ValueError:
             continue
     return None
