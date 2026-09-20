@@ -45,6 +45,13 @@ class IncomingMessage:
     type: str
     text: Optional[str] = None
     interactive_id: Optional[str] = None
+    wamid: Optional[str] = None
+    timestamp: Optional[str] = None
+    contact_name: Optional[str] = None
+    interactive_title: Optional[str] = None
+    media_id: Optional[str] = None
+    media_mime_type: Optional[str] = None
+    media_filename: Optional[str] = None
 
 
 def extract_messages(payload: dict) -> list[IncomingMessage]:
@@ -55,22 +62,27 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
             value = change.get("value", {})
             messages = value.get("messages")
             if not messages:
-                # e.g. "statuses" (delivery/read receipts) -> nothing to do
                 continue
+
+            contacts = value.get("contacts", [])
+            contact_name = None
+            if contacts:
+                contact_name = contacts[0].get("profile", {}).get("name")
 
             for msg in messages:
                 phone = msg.get("from")
                 if not phone:
-                    # Defensive case: WhatsApp Cloud API always includes "from" for
-                    # genuine user messages, but we can't identify or reply to a
-                    # user without a phone number, so we skip and log instead of
-                    # raising. (See README for the "consent" design note.)
                     logger.warning("Skipping incoming message with no phone number: %s", msg)
                     continue
 
                 msg_type = msg.get("type", "unknown")
                 text = None
                 interactive_id = None
+                interactive_title = None
+
+                media_id = None
+                media_mime_type = None
+                media_filename = None
 
                 if msg_type == "text":
                     text = msg.get("text", {}).get("body")
@@ -78,9 +90,22 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
                     interactive = msg.get("interactive", {})
                     itype = interactive.get("type")
                     if itype == "list_reply":
-                        interactive_id = interactive.get("list_reply", {}).get("id")
+                        reply = interactive.get("list_reply", {})
+                        interactive_id = reply.get("id")
+                        interactive_title = reply.get("title")
                     elif itype == "button_reply":
-                        interactive_id = interactive.get("button_reply", {}).get("id")
+                        reply = interactive.get("button_reply", {})
+                        interactive_id = reply.get("id")
+                        interactive_title = reply.get("title")
+                elif msg_type == "image":
+                    image = msg.get("image", {})
+                    media_id = image.get("id")
+                    media_mime_type = image.get("mime_type")
+                elif msg_type == "document":
+                    document = msg.get("document", {})
+                    media_id = document.get("id")
+                    media_mime_type = document.get("mime_type")
+                    media_filename = document.get("filename")
 
                 results.append(
                     IncomingMessage(
@@ -88,6 +113,13 @@ def extract_messages(payload: dict) -> list[IncomingMessage]:
                         type=msg_type,
                         text=text,
                         interactive_id=interactive_id,
+                        wamid=msg.get("id"),
+                        timestamp=msg.get("timestamp"),
+                        contact_name=contact_name,
+                        interactive_title=interactive_title,
+                        media_id=media_id,
+                        media_mime_type=media_mime_type,
+                        media_filename=media_filename,
                     )
                 )
 

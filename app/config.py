@@ -13,6 +13,13 @@ class Settings(BaseSettings):
 
     # Club Costa Azul services API (socios / actividades / inscripciones)
     services_api_base_url: str
+    bot_api_key: str = ""
+
+    # Shared secret the webhook router must send as X-Router-Secret
+    router_secret: str = ""
+
+    # MongoDB (message storage)
+    mongodb_url: str
 
     log_level: str = "INFO"
 

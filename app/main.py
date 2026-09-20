@@ -3,17 +3,24 @@
 import logging
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
+from . import message_store
 from .config import settings
 from .conversation import handle_message
 from .services_client import services_client
+from .storing_client import storing_client
 from .webhook_parser import extract_messages
-from .whatsapp_client import whatsapp_client
 
 logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Club Costa Azul WhatsApp Bot")
+
+
+@app.on_event("startup")
+async def startup():
+    await message_store.ensure_indexes()
 
 
 @app.get("/health")
@@ -28,6 +35,10 @@ async def webhook(request: Request):
     the upstream webhook service. Always returns 200 so the upstream webhook
     doesn't retry/error regardless of how processing goes downstream.
     """
+    if settings.router_secret:
+        if request.headers.get("X-Router-Secret") != settings.router_secret:
+            return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+
     payload = await request.json()
 
     try:
@@ -48,4 +59,5 @@ async def webhook(request: Request):
 @app.on_event("shutdown")
 async def shutdown():
     await services_client.aclose()
-    await whatsapp_client.aclose()
+    await storing_client.aclose()
+    await message_store.close()
