@@ -10,7 +10,8 @@ from .config import settings
 from .conversation import handle_message
 from .services_client import services_client
 from .storing_client import storing_client
-from .webhook_parser import extract_messages
+from .webhook_parser import extract_messages, extract_metadata
+from .whatsapp_client import whatsapp_client
 
 logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger(__name__)
@@ -21,6 +22,10 @@ app = FastAPI(title="Club Costa Azul WhatsApp Bot")
 @app.on_event("startup")
 async def startup():
     await message_store.ensure_indexes()
+    try:
+        await whatsapp_client.check_phone_number()
+    except Exception:
+        logger.exception("WhatsApp sender self-check failed")
 
 
 @app.get("/health")
@@ -40,6 +45,18 @@ async def webhook(request: Request):
             return JSONResponse(status_code=403, content={"detail": "Forbidden"})
 
     payload = await request.json()
+
+    for meta in extract_metadata(payload):
+        received_id = meta.get("phone_number_id")
+        if received_id and str(received_id) != settings.whatsapp_phone_number_id:
+            logger.error(
+                "WHATSAPP_PHONE_NUMBER_ID mismatch: configured=%s but this message arrived on "
+                "phone_number_id=%s (display_phone_number=%s). Outbound replies will fail with "
+                "'Unsupported request - method type: post'.",
+                settings.whatsapp_phone_number_id,
+                received_id,
+                meta.get("display_phone_number"),
+            )
 
     try:
         incoming_messages = extract_messages(payload)

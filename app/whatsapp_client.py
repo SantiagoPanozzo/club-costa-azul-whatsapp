@@ -18,7 +18,7 @@ def _truncate(text: str, limit: int) -> str:
 
 def _graph_error_hint(body: str) -> str:
     """Return a short, actionable hint for common Graph API errors (or "")."""
-    if "Unsupported request - method type" in body:
+    if "Unsupported request - method type: post" in body:
         return (
             " | hint: WHATSAPP_PHONE_NUMBER_ID does not accept POST /messages for this token. "
             "Check it is the Phone number ID (WhatsApp Manager → API Setup), not the WhatsApp "
@@ -26,6 +26,13 @@ def _graph_error_hint(body: str) -> str:
         )
     if "Authentication Error" in body or '"code":190' in body:
         return " | hint: WHATSAPP_API_TOKEN is missing, expired, or not valid for this app."
+    if "nonexisting field (display_phone_number)" in body:
+        return (
+            " | hint: this ID is not a Cloud API phone number (it looks like the WhatsApp Business "
+            "Account / WABA ID). Use the Phone number ID from WhatsApp Manager → API Setup."
+        )
+    if "does not exist" in body or "Unsupported get request" in body:
+        return " | hint: this ID does not exist, or WHATSAPP_API_TOKEN has no access to it."
     return ""
 
 
@@ -48,6 +55,40 @@ class WhatsAppClient:
 
     async def aclose(self):
         await self._client.aclose()
+
+    async def check_phone_number(self) -> dict | None:
+        """Resolve the configured phone number ID against Meta.
+
+        Called at startup so a wrong ``WHATSAPP_PHONE_NUMBER_ID`` (e.g. the WABA
+        ID, or a number owned by another app than ``WHATSAPP_API_TOKEN``) is
+        obvious in the logs before any user message hits it.
+        """
+        try:
+            resp = await self._client.get(
+                f"{self._graph_base}/{settings.whatsapp_phone_number_id}",
+                params={"fields": "display_phone_number,verified_name"},
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            body = getattr(exc, "response", None)
+            body_text = body.text if body is not None else ""
+            logger.error(
+                "WHATSAPP_PHONE_NUMBER_ID=%s could not be resolved with WHATSAPP_API_TOKEN: %s | response=%s%s",
+                settings.whatsapp_phone_number_id,
+                exc,
+                body_text,
+                _graph_error_hint(body_text),
+            )
+            return None
+
+        data = resp.json()
+        logger.info(
+            "WhatsApp sender resolved: phone_number_id=%s display_phone_number=%s verified_name=%s",
+            settings.whatsapp_phone_number_id,
+            data.get("display_phone_number"),
+            data.get("verified_name"),
+        )
+        return data
 
     async def _send(self, payload: dict) -> str | None:
         """Send a message and return the wamid on success, None on error."""

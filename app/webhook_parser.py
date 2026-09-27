@@ -54,6 +54,22 @@ class IncomingMessage:
     media_filename: Optional[str] = None
 
 
+def extract_metadata(payload: dict) -> list[dict]:
+    """Return the ``metadata`` blocks (sending number info) of a webhook payload.
+
+    Meta includes the phone number the message arrived on as
+    ``metadata.phone_number_id`` / ``metadata.display_phone_number``; comparing
+    it with the configured sender ID catches credential mismatches early.
+    """
+    metas: list[dict] = []
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            meta = change.get("value", {}).get("metadata")
+            if isinstance(meta, dict):
+                metas.append(meta)
+    return metas
+
+
 def extract_messages(payload: dict) -> list[IncomingMessage]:
     results: list[IncomingMessage] = []
 
