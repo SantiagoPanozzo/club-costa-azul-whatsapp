@@ -22,7 +22,28 @@ async def ensure_indexes() -> None:
     await _conversations.create_index("last_message_at")
     await _messages.create_index([("conversation_id", 1), ("timestamp", 1)])
     await _messages.create_index([("phone", 1), ("timestamp", 1)])
-    await _messages.create_index("wamid", unique=True, sparse=True)
+    await _ensure_wamid_index()
+
+
+async def _ensure_wamid_index() -> None:
+    """Unique ``wamid`` index, restricted to documents that actually carry one.
+
+    A unique (even sparse) index on a single field still indexes documents whose
+    ``wamid`` key exists with a null value, so every outgoing message stored
+    after a failed send (``wamid=None``) would collide on ``{wamid: null}``. A
+    partial index keeps those documents out of the index entirely.
+    """
+    info = await _messages.index_information()
+    legacy = info.get("wamid_1")
+    if legacy is not None and legacy.get("key") == [("wamid", 1)]:
+        # Old sparse-unique index; it rejected a second null wamid.
+        await _messages.drop_index("wamid_1")
+    await _messages.create_index(
+        "wamid",
+        unique=True,
+        name="wamid_unique",
+        partialFilterExpression={"wamid": {"$type": "string"}},
+    )
 
 
 async def close() -> None:
@@ -77,18 +98,19 @@ async def store_incoming(incoming: IncomingMessage, session: Session) -> bool:
         if incoming.interactive_title:
             content["interactive_title"] = incoming.interactive_title
 
-        await _messages.insert_one(
-            {
-                "conversation_id": conv_id,
-                "phone": incoming.phone,
-                "wamid": incoming.wamid,
-                "direction": "incoming",
-                "timestamp": now,
-                "type": incoming.type,
-                "content": content,
-                "flow": session.active_flow,
-            }
-        )
+        doc = {
+            "conversation_id": conv_id,
+            "phone": incoming.phone,
+            "direction": "incoming",
+            "timestamp": now,
+            "type": incoming.type,
+            "content": content,
+            "flow": session.active_flow,
+        }
+        if incoming.wamid:
+            doc["wamid"] = incoming.wamid
+
+        await _messages.insert_one(doc)
         return True
     except Exception as exc:
         if "duplicate key" in str(exc).lower() or "E11000" in str(exc):
@@ -110,17 +132,18 @@ async def store_outgoing(
         now = datetime.now(timezone.utc)
         conv_id = await _upsert_conversation(phone, contact_name, session, now)
 
-        await _messages.insert_one(
-            {
-                "conversation_id": conv_id,
-                "phone": phone,
-                "wamid": wamid,
-                "direction": "outgoing",
-                "timestamp": now,
-                "type": msg_type,
-                "content": content,
-                "flow": session.active_flow,
-            }
-        )
+        doc = {
+            "conversation_id": conv_id,
+            "phone": phone,
+            "direction": "outgoing",
+            "timestamp": now,
+            "type": msg_type,
+            "content": content,
+            "flow": session.active_flow,
+        }
+        if wamid:
+            doc["wamid"] = wamid
+
+        await _messages.insert_one(doc)
     except Exception:
         logger.exception("Failed to store outgoing message to %s", phone)

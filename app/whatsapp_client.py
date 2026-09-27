@@ -16,6 +16,19 @@ def _truncate(text: str, limit: int) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
+def _graph_error_hint(body: str) -> str:
+    """Return a short, actionable hint for common Graph API errors (or "")."""
+    if "Unsupported request - method type" in body:
+        return (
+            " | hint: WHATSAPP_PHONE_NUMBER_ID does not accept POST /messages for this token. "
+            "Check it is the Phone number ID (WhatsApp Manager → API Setup), not the WhatsApp "
+            "Business Account (WABA) ID, and that it belongs to the same app as WHATSAPP_API_TOKEN."
+        )
+    if "Authentication Error" in body or '"code":190' in body:
+        return " | hint: WHATSAPP_API_TOKEN is missing, expired, or not valid for this app."
+    return ""
+
+
 MAX_MEDIA_SIZE = 5 * 1024 * 1024
 
 
@@ -47,10 +60,11 @@ class WhatsAppClient:
             body = getattr(exc, "response", None)
             body_text = body.text if body is not None else ""
             logger.error(
-                "Error sending WhatsApp message: %s | response=%s | payload=%s",
+                "Error sending WhatsApp message: %s | response=%s | payload=%s%s",
                 exc,
                 body_text,
                 payload,
+                _graph_error_hint(body_text),
             )
             return None
 
