@@ -2,9 +2,11 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 WORKDIR /app
 
-# Install dependencies first for better layer caching
-COPY pyproject.toml ./
-RUN uv sync --no-dev
+# Install dependencies first for better layer caching.
+# Copy uv.lock and sync --frozen so the image is reproducible: an unpinned
+# resolve picked up an incompatible new release (websockets 17.2) and broke the build.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
 
 COPY app ./app
 
