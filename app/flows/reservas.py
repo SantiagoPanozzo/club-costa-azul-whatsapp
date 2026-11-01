@@ -40,6 +40,16 @@ def _parse_time(text: str) -> str | None:
     return None
 
 
+def _reservables(espacios: list[dict]) -> list[dict]:
+    """Filtra los espacios que el socio puede reservar desde el bot.
+
+    Un espacio se ofrece si está ``Disponible`` y la API no lo marca como no
+    reservable. El campo ``reservable`` ausente se interpreta como reservable:
+    así el bot sigue funcionando contra una API vieja que todavía no lo manda.
+    """
+    return [e for e in espacios if e.get("estado") == "Disponible" and e.get("reservable") is not False]
+
+
 class ReservasStep(StrEnum):
     AWAITING_ACTION = "awaiting_action"
     AWAITING_SPACE = "awaiting_space"
@@ -128,7 +138,7 @@ class ReservasFlow(BaseFlow[ReservasState]):
             await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
             return FlowResult.DONE
 
-        disponibles = [e for e in espacios if e.get("estado") == "Disponible"]
+        disponibles = _reservables(espacios)
         if not disponibles:
             await whatsapp_client.send_text(
                 phone,
