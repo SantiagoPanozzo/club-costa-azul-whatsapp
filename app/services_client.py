@@ -21,6 +21,14 @@ class ServicesAPIBadRequest(ServicesAPIError):
     """Raised on 400 Bad Request — the API rejected the input with a user-facing message."""
 
 
+class ServicesAPINoEncontrado(ServicesAPIError):
+    """La inscripción o clase ya no existe."""
+
+
+class ServicesAPICupoAgotado(ServicesAPIConflict):
+    """La clase se llenó antes de confirmar."""
+
+
 class ServicesClient:
     def __init__(self):
         self._client = httpx.AsyncClient(base_url=settings.services_api_base_url, timeout=10.0)
@@ -89,35 +97,48 @@ class ServicesClient:
             raise ServicesAPIError(str(exc)) from exc
         return resp.json()
 
-    async def post_inscripcion(self, socio_id: str, actividad_id: str) -> dict:
+    async def _solicitar_inscripcion(self, metodo: str, ruta: str, **opciones):
+        """Errores acotados: nunca propagar cuerpos internos de la API al socio."""
         try:
-            resp = await self._client.post(
-                "/inscripciones",
-                json={"socioId": socio_id, "actividadId": actividad_id},
-                headers=self._auth_headers(),
-            )
+            resp = await self._client.request(metodo, ruta, headers=self._auth_headers(), **opciones)
+            if resp.status_code == 404:
+                raise ServicesAPINoEncontrado("La inscripción o la clase ya no está disponible.")
+            if resp.status_code == 409:
+                try:
+                    cuerpo = resp.json()
+                    mensaje = cuerpo.get("mensaje", "") if isinstance(cuerpo, dict) else ""
+                except ValueError:
+                    mensaje = ""
+                if isinstance(mensaje, str) and "cupo" in mensaje.casefold():
+                    raise ServicesAPICupoAgotado("La clase ya no tiene cupo disponible. Elegí otra clase.")
+                raise ServicesAPIConflict("La inscripción cambió o ya estás inscripto/a. Revisá Mis inscripciones.")
+            if resp.status_code == 400:
+                raise ServicesAPIBadRequest("La clase ya no admite esta operación. Revisá Mis inscripciones.")
             resp.raise_for_status()
-        except httpx.HTTPError as exc:
-            logger.error(
-                "Error creating inscripcion (socio=%s, actividad=%s): %s",
-                socio_id,
-                actividad_id,
-                exc,
-            )
-            raise ServicesAPIError(str(exc)) from exc
-        return resp.json()
+            return resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("Error en API de inscripciones: %s %s", metodo, ruta)
+            raise ServicesAPIError("No se pudo consultar la inscripción.") from exc
+
+    async def get_instancias_actividad(self, actividad_id: str) -> list[dict]:
+        return await self._solicitar_inscripcion("GET", f"/actividades/{actividad_id}/instancias")
+
+    async def get_inscripcion(self, inscripcion_id: str) -> dict:
+        return await self._solicitar_inscripcion("GET", f"/inscripciones/{inscripcion_id}")
+
+    async def post_inscripcion(self, socio_id: str, actividad_id: str, instancia_id: str | None = None) -> dict:
+        cuerpo = {"socioId": socio_id, "actividadId": actividad_id}
+        if instancia_id is not None:
+            cuerpo["instanciaId"] = instancia_id
+        return await self._solicitar_inscripcion("POST", "/inscripciones", json=cuerpo)
 
     async def delete_inscripcion(self, inscripcion_id: str) -> dict:
-        try:
-            resp = await self._client.delete(
-                f"/inscripciones/{inscripcion_id}",
-                headers=self._auth_headers(),
-            )
-            resp.raise_for_status()
-        except httpx.HTTPError as exc:
-            logger.error("Error cancelling inscripcion %s: %s", inscripcion_id, exc)
-            raise ServicesAPIError(str(exc)) from exc
-        return resp.json()
+        return await self._solicitar_inscripcion("DELETE", f"/inscripciones/{inscripcion_id}")
+
+    async def dar_baja_instancia(self, instancia_id: str, socio_id: str) -> dict:
+        return await self._solicitar_inscripcion(
+            "DELETE", f"/instancias/{instancia_id}/inscripcion", params={"socioId": socio_id}
+        )
 
     async def get_socio_detalle(self, socio_id: str) -> dict | None:
         try:

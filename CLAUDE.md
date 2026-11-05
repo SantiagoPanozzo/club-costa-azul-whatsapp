@@ -20,7 +20,9 @@ docker build -t costa-azul-bot .
 docker run --env-file .env -p 8000:8000 costa-azul-bot
 ```
 
-No test suite or linter is configured yet.
+Tests: `uv run pytest tests/`. Lint/format: `uv run ruff check .` and
+`uv run ruff format --check .`. Tests use synthetic settings and mocked transports;
+they never contact Meta or send messages to real members.
 
 ## Architecture
 
@@ -52,6 +54,13 @@ See **[docs/flows.md](docs/flows.md)** for the full guide. In short: create a fl
 ### Conversation flow (Spanish)
 
 All user-facing messages are in Spanish. The bot auto-identifies the user by WhatsApp number (no login prompt), shows their current activity enrollments, offers available activities, and confirms sign-up via interactive buttons.
+
+KAN-271: activity signup selects a future class with capacity when available, persists
+`instanciaId`, and keeps generic signup only when no future scheduled classes exist
+(never as a way around full classes). Enrollment reads include `clases` and their
+`estadoClase`; per-class withdrawal uses the instance endpoint with `socioId`, not
+whole-inscription deletion. Confirmations reload API data; lost sessions cannot replay
+old selections. See `docs/flows.md` for contracts and pagination.
 
 ### WhatsApp API constraints
 
