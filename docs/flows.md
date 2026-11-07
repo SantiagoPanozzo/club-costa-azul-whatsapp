@@ -119,7 +119,36 @@ MENU_OPTIONS: list[dict[str, str]] = [
 
 The menu item `id` must match the `FLOW_REGISTRY` key exactly — this is how the router knows which flow to enter.
 
-## Conventions
+## Actividades: clases puntuales (KAN-271)
+
+- El menú de Actividades ofrece **Inscribirme** y **Mis inscripciones**. Una actividad
+  no se excluye por tener otra inscripción ni por su cupo genérico: al elegirla se
+  consulta `GET /actividades/{id}/instancias`, con `cupoDisponible` por clase.
+- Se ofrecen clases futuras `Programada`, no liquidadas, con cupo y aún no cubiertas
+  por una inscripción activa. Fechas y horarios usan `America/Montevideo` y días en
+  español. La selección tiene paginación de ocho filas más navegación (máximo diez).
+- El POST envía `{ socioId, actividadId, instanciaId }`. Si no hay clases futuras
+  programadas, conserva `{ socioId, actividadId }` y confirma explícitamente una
+  inscripción general. **Las clases llenas/cerradas/ya cubiertas no habilitan ese
+  fallback**, para no eludir el cupo mediante una inscripción genérica.
+- Mis inscripciones muestra cada clase con actividad, fecha, horario y bajas. Para
+  genéricas se muestra también una opción separada para cancelar el rango completo.
+  Las clases cubiertas por una genérica aparecen individualmente y se deduplican si
+  se superponen con una inscripción específica. No se ofrecen filas canceladas,
+  clases pasadas ni bajas ya registradas para cancelar de nuevo.
+- Una baja de clase llama `DELETE /instancias/{id}/inscripcion?socioId={socioId}` con
+  `X-Api-Key`; nunca usa `DELETE /inscripciones/{id}`. Esa última operación se conserva
+  solo para cancelar explícitamente una inscripción **genérica completa**.
+- Antes del alta se recarga la clase y, si cambió fecha/horario/costo, se vuelve a pedir
+  confirmación. Antes de la baja se lee `GET /inscripciones/{id}` y se valida dueño,
+  estado y clase. La API vuelve a verificar disponibilidad al ejecutar. Perder la
+  sesión obliga a recomenzar: ningún botón viejo ejecuta una operación sin selección.
+- Cupo agotado, recurso retirado/ya cancelado y fallos técnicos tienen mensajes
+  acotados en español; nunca se reenvían cuerpos o excepciones internas al usuario.
+- Tests: `uv run pytest tests/test_activities.py tests/test_services_client.py`.
+  No requieren Meta ni números reales; las salidas WhatsApp se simulan.
+
+## Convenciones generales
 
 - All user-facing text is in Spanish.
 - Flow-specific constants (button IDs, prefixes) live in the flow module, not in shared constants.
