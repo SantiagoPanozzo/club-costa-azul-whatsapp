@@ -6,7 +6,6 @@ from enum import StrEnum
 from .. import services_client as svc
 from ..services_client import ServicesAPIError
 from ..state import Session
-from ..storing_client import storing_client as whatsapp_client
 from ..webhook_parser import IncomingMessage
 from .base import BaseFlow, FlowResult
 
@@ -46,13 +45,11 @@ class DatosPersonalesFlow(BaseFlow[DatosPersonalesState]):
         except ServicesAPIError:
             logger.warning("Error fetching socio detail for %s", socio_id)
             traceback.print_exc()
-            await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
-            session.end_flow()
+            session.finish(GENERIC_ERROR, "error")
             return
 
         if not detalle:
-            await whatsapp_client.send_text(phone, "No pudimos obtener tus datos.", session=session)
-            session.end_flow()
+            session.finish("No pudimos obtener tus datos.", "empty")
             return
 
         nombre = f"{detalle.get('nombre', '')} {detalle.get('apellido', '')}".strip()
@@ -77,13 +74,8 @@ class DatosPersonalesFlow(BaseFlow[DatosPersonalesState]):
             f"🏥 Sociedad médica: {sociedad_medica}",
         ]
 
-        await whatsapp_client.send_text(phone, "\n".join(lines), session=session)
-        await whatsapp_client.send_text(
-            phone,
-            "Para actualizar tus datos, ingresá a https://clubcostaazul.com",
-            session=session,
-        )
-        session.end_flow()
+        session.set_task("view")
+        session.finish("\n".join(lines) + "\n\nPara actualizar tus datos, ingresá a https://clubcostaazul.com")
 
     async def handle(self, phone: str, session: Session, msg: IncomingMessage) -> FlowResult:
         return FlowResult.DONE

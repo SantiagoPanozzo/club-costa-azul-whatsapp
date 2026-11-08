@@ -6,7 +6,6 @@ from enum import StrEnum
 from .. import services_client as svc
 from ..services_client import ServicesAPIError
 from ..state import Session
-from ..storing_client import storing_client as whatsapp_client
 from ..webhook_parser import IncomingMessage
 from .base import BaseFlow, FlowResult
 
@@ -36,13 +35,11 @@ class ComunicadosFlow(BaseFlow[ComunicadosState]):
         except ServicesAPIError:
             logger.warning("Error fetching noticias")
             traceback.print_exc()
-            await whatsapp_client.send_text(phone, GENERIC_ERROR, session=session)
-            session.end_flow()
+            session.finish(GENERIC_ERROR, "error")
             return
 
         if not noticias:
-            await whatsapp_client.send_text(phone, "No hay comunicados publicados en este momento.", session=session)
-            session.end_flow()
+            session.finish("No hay comunicados publicados en este momento.", "empty")
             return
 
         lines = ["*Últimos comunicados del club:*", ""]
@@ -61,13 +58,10 @@ class ComunicadosFlow(BaseFlow[ComunicadosState]):
                 lines.append(f"   {resumen}")
             lines.append("")
 
-        await whatsapp_client.send_text(phone, "\n".join(lines).strip(), session=session)
-        await whatsapp_client.send_text(
-            phone,
-            "Para ver todos los comunicados, ingresá a https://clubcostaazul.com",
-            session=session,
+        session.set_task("view")
+        session.finish(
+            "\n".join(lines).strip() + "\n\nPara ver todos los comunicados, ingresá a https://clubcostaazul.com"
         )
-        session.end_flow()
 
     async def handle(self, phone: str, session: Session, msg: IncomingMessage) -> FlowResult:
         return FlowResult.DONE
