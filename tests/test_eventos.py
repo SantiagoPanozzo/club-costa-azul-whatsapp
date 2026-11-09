@@ -57,9 +57,9 @@ async def test_enroll_three_turns_three_messages_with_details_and_full_menu(tran
     for expected in [
         "Encuentro",
         event["descripcion"],
-        event["fecha"],
-        "09:00:00",
-        "10:00:00",
+        "11/05/2099",
+        "09:00",
+        "10:00",
         "Quincho",
         "$123.45",
         "$250.75",
@@ -85,7 +85,7 @@ async def test_withdraw_four_turns_four_messages_scoped_explicit_consent(transcr
     own = await transcript.send(flow.ACTION_WITHDRAW)
     assert {r["id"] for r in rows(own)} == {"evtw_i1", flow.ACTION_BROWSE}
     confirmation = await transcript.send("evtw_i1")
-    for expected in ["Encuentro", EVENT["fecha"], "09:00:00", "10:00:00", "Quincho", "$100"]:
+    for expected in ["Encuentro", "11/05/2099", "09:00", "10:00", "Quincho", "$100"]:
         assert expected in body(confirmation)
     assert buttons(confirmation) == [flow.WITHDRAW_YES, flow.WITHDRAW_NO, MENU_ID]
     assert_no_writes(transcript)
@@ -335,8 +335,8 @@ async def test_full_summary_sorted_by_enrollment_date_not_event_date(transcript)
     catalog = await transcript.send("eventos")
     text = body(catalog)
     assert text.index("Evento reciente") < text.index("Evento futuro")
-    assert "2026-11-01T00:00:00Z" in text
-    assert "2026-01-01T00:00:00Z" in text
+    assert "01/11/2026" in text
+    assert "01/01/2026" in text
     transcript.assert_single_responses(1)
 
 
@@ -362,7 +362,7 @@ async def test_adaptive_summary_latest_or_count_and_all_details_still_accessible
     assert rows(own)[0]["id"] == "evtw_i0"
     detail = await transcript.send("evtw_i3")
     assert "Inscripción 3" in body(detail)
-    assert "2026-10-22T00:00:00Z" in body(detail)
+    assert "22/10/2026" in body(detail)
     assert_no_writes(transcript)
     transcript.assert_single_responses(3)
 
@@ -377,7 +377,7 @@ async def test_historical_cancelled_and_missing_event_details_remain_accessible(
     own = await transcript.send(flow.ACTION_WITHDRAW)
     assert {r["id"] for r in rows(own)} == {"evtw_i1", "evtw_missing", flow.ACTION_BROWSE}
     cancelled = await transcript.send("evtw_i1")
-    assert "2000-01-01" in body(cancelled)
+    assert "01/01/2000" in body(cancelled)
     assert "Cancelada" in body(cancelled)
     assert flow.WITHDRAW_YES not in buttons(cancelled)
     await transcript.send(flow.WITHDRAW_YES)
@@ -385,7 +385,7 @@ async def test_historical_cancelled_and_missing_event_details_remain_accessible(
     missing = await transcript.send("evtw_missing")
     assert "archived-event" in body(missing)
     assert "detalle no disponible" in body(missing)
-    assert "2026-10-01T10:00:00Z" in body(missing)
+    assert "01/10/2026" in body(missing)
     assert_no_writes(transcript)
     transcript.assert_single_responses(6)
 
@@ -408,7 +408,7 @@ async def test_description_only_overflows_when_necessary_and_is_lossless(transcr
         assert all(len(text) <= 4096 for text in overflow)
         assert description not in body(confirmation)
     assert len(body(confirmation)) <= BUTTON_BODY_LIMIT
-    for value in ["Encuentro", EVENT["fecha"], "09:00:00", "10:00:00", "Quincho", "$123.456", "$456.78"]:
+    for value in ["Encuentro", "11/05/2099", "09:00", "10:00", "Quincho", "$123.456", "$456.78"]:
         assert value in body(confirmation)
     assert buttons(confirmation) == [flow.CONFIRM_YES, flow.CONFIRM_NO, MENU_ID]
     assert_no_writes(transcript)

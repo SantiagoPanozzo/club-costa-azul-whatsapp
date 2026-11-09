@@ -17,7 +17,7 @@ ACTIVITY = {
     "estado": "Activa",
     "cupoDisponible": 5,
     "costo": 100,
-    "diasSemana": [1],
+    "diasSemana": ["Monday"],
     "horaInicio": "09:00:00",
     "horaFin": "10:00:00",
 }

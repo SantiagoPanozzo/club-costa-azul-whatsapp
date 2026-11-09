@@ -55,7 +55,7 @@ def reservation(**overrides):
     return {
         "id": "r1",
         "nombreEspacio": "Quincho",
-        "fecha": future_date(),
+        "fecha": (date.today() + timedelta(days=2)).isoformat(),
         "estado": "Pendiente",
         "horaInicio": "10:00:00",
         "horaFin": "12:00:00",
@@ -145,7 +145,7 @@ async def test_creation_uses_seven_router_turns_and_preserves_api_contract(trans
     assert [row["id"] for row in rows(transcript.payloads[0])] == ["esp_s1", ACTION_LIST, MENU_ID]
     assert button_ids(transcript.payloads[-1]) == [CONFIRM_YES, CONFIRM_NO, MENU_ID]
     summary = transcript.bodies[-1]
-    for critical in ("Quincho", future_date(), "10:00:00", "12:00:00", "Personas: 4", "Cumpleaños", "$100"):
+    for critical in ("Quincho", future_date(), "10:00", "12:00", "Personas: 4", "Cumpleaños", "$100"):
         assert critical in summary
     assert_no_writes(transcript)
     await transcript.send(CONFIRM_YES)
@@ -164,8 +164,8 @@ async def test_creation_uses_seven_router_turns_and_preserves_api_contract(trans
 
 async def test_cancellation_uses_four_router_turns_and_disambiguating_times(transcript):
     await reach_cancellation(transcript)
-    assert "10:00:00 - 12:00:00" in rows(transcript.payloads[1])[0]["description"]
-    assert "10:00:00 - 12:00:00" in transcript.bodies[-1]
+    assert "10:00 - 12:00" in rows(transcript.payloads[1])[0]["description"]
+    assert "10:00 - 12:00" in transcript.bodies[-1]
     assert button_ids(transcript.payloads[-1]) == [CANCEL_YES, CANCEL_NO, MENU_ID]
     assert_no_writes(transcript)
     await transcript.send(CANCEL_YES)
@@ -434,7 +434,7 @@ async def test_changed_reservation_time_requires_fresh_explicit_cancellation(tra
     await reach_cancellation(transcript)
     transcript.api.get_reservas_socio.return_value = [reservation(horaInicio="11:00:00")]
     await transcript.send(CANCEL_YES)
-    assert "11:00:00 - 12:00:00" in transcript.bodies[-1]
+    assert "11:00 - 12:00" in transcript.bodies[-1]
     assert_no_writes(transcript)
     await transcript.send(CANCEL_YES)
     transcript.api.delete_reserva.assert_awaited_once_with("r1", "s1")
@@ -524,7 +524,7 @@ async def test_long_confirmation_is_lossless_and_keeps_all_critical_fields(trans
     transcript.api.get_espacios.return_value = [{**SPACE, "nombre": name, "costo": 123.45}]
     await reach_confirmation(transcript, reason=reason)
     combined = "".join(body(payload) for payload in transcript.turns[-1])
-    for critical in (name, reason, future_date(), "10:00:00", "12:00:00", "Personas: 4", "$123.45"):
+    for critical in (name, reason, future_date(), "10:00", "12:00", "Personas: 4", "$123.45"):
         assert critical in combined
     assert button_ids(transcript.payloads[-1]) == [CONFIRM_YES, CONFIRM_NO, MENU_ID]
     assert_payload_limits(transcript.payloads)

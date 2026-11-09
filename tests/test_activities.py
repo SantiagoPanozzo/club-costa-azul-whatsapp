@@ -104,7 +104,7 @@ async def test_seleccion_de_instancia_y_post_con_vinculo(entorno):
     await elegir_clase(entorno)
     assert sesion.flow_state.instancia_elegida["id"] == "c1"
     cuerpo = mensajes.send_buttons.call_args.kwargs["body"]
-    assert "11/05/2099" in cuerpo and "09:00-10:00" in cuerpo
+    assert "11/05/2099" in cuerpo and "09:00 - 10:00" in cuerpo
     assert await responder(f, sesion, flujo.CONFIRM_YES) == FlowResult.DONE
     api.post_inscripcion.assert_awaited_once_with("s1", "a1", instancia_id="c1")
     assert api.get_instancias_actividad.await_count == 2  # selección y confirmación
@@ -121,7 +121,7 @@ async def test_otro_horario_misma_actividad_no_excluye_actividad(entorno):
     await responder(f, sesion, "act_a1")
     assert list(sesion.flow_state.instancias_disponibles) == ["c2"]
     assert sesion.flow_state.instancia_elegida["id"] == "c2"
-    assert "18:00-19:00" in mensajes.send_buttons.call_args.kwargs["body"]
+    assert "18:00 - 19:00" in mensajes.send_buttons.call_args.kwargs["body"]
 
 
 async def test_fallback_generico_sin_instancias_no_envia_instancia_id(entorno):
@@ -143,8 +143,8 @@ async def test_listado_y_baja_de_una_sola_clase(entorno):
     filas = mensajes.send_list.call_args.kwargs["rows"]
     assert len(filas) == 3
     assert "11/05/2099" in filas[0]["description"]
-    assert "09:00-10:00" in filas[0]["description"]
-    assert "18:00-19:00" in filas[1]["description"]
+    assert "09:00 - 10:00" in filas[0]["description"]
+    assert "18:00 - 19:00" in filas[1]["description"]
     await responder(f, sesion, filas[0]["id"])
     await responder(f, sesion, flujo.CANCEL_CONFIRM_YES)
     api.get_inscripcion.assert_awaited_once_with("i1")
@@ -238,7 +238,7 @@ async def test_cambio_de_horario_exige_nueva_confirmacion(entorno):
     api.get_instancias_actividad.return_value = [{**CLASE, "horaInicio": "08:00:00"}]
     assert await responder(f, sesion, flujo.CONFIRM_YES) == FlowResult.CONTINUE
     api.post_inscripcion.assert_not_awaited()
-    assert "08:00-10:00" in mensajes.send_buttons.call_args.kwargs["body"]
+    assert "08:00 - 10:00" in mensajes.send_buttons.call_args.kwargs["body"]
 
 
 @pytest.mark.parametrize("error", [ServicesAPINoEncontrado("interno"), ServicesAPIBadRequest("interno")])

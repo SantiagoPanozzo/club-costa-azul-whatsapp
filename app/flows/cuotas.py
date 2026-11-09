@@ -5,6 +5,7 @@ from enum import StrEnum
 
 from .. import services_client as svc
 from ..flow_ui import MENU_ID, list_body_limit, paginate_rows, split_text, with_notice
+from ..formatting import format_billing_period, format_date
 from ..services_client import ServicesAPIBadRequest, ServicesAPIError
 from ..state import Session
 from ..storing_client import storing_client as whatsapp_client
@@ -49,6 +50,7 @@ class CuotasState:
     selected_cuota_id: str | None = None
     presented_cuota_id: str | None = None
     presented_terms: tuple[str, Decimal] | None = None
+    presented_bounds: tuple[object, object] | None = None
     page: int = 0
     statement_page: int = 0
 
@@ -65,8 +67,8 @@ def _terms(cuota: dict) -> tuple[str, Decimal]:
 def _entry(cuota: dict) -> str:
     estado = cuota.get("estado", "")
     return (
-        f"{ESTADO_ICONS.get(estado, '?')} {cuota.get('periodo', '')}: {_amount(cuota)} - "
-        f"{ESTADO_LABELS.get(estado, estado)} (vence {cuota.get('fechaVencimiento', '')})"
+        f"{ESTADO_ICONS.get(estado, '?')} {format_billing_period(cuota)}: {_amount(cuota)} - "
+        f"{ESTADO_LABELS.get(estado, estado)} (vence {format_date(cuota.get('fechaVencimiento'))})"
     )
 
 
@@ -148,7 +150,7 @@ class CuotasFlow(BaseFlow[CuotasState]):
         state.step = CuotasStep.AWAITING_CUOTA_SELECTION
         rows, state.page = paginate_rows(
             [
-                {"id": f"{CUOTA_PREFIX}{cid}", "title": str(c.get("periodo", "")), "description": _amount(c)}
+                {"id": f"{CUOTA_PREFIX}{cid}", "title": format_billing_period(c), "description": _amount(c)}
                 for cid, c in state.pending_cuotas.items()
             ],
             state.page,
@@ -175,7 +177,7 @@ class CuotasFlow(BaseFlow[CuotasState]):
         state.step = CuotasStep.AWAITING_COMPROBANTE
         session.set_task("upload_receipt")
         cuota = state.pending_cuotas[state.selected_cuota_id]
-        prompt = f"Comprobante para la cuota de *{cuota.get('periodo', '')}* ({_amount(cuota)}).\n{INSTRUCTIONS}"
+        prompt = f"Comprobante para la cuota de *{format_billing_period(cuota)}* ({_amount(cuota)}).\n{INSTRUCTIONS}"
         body = _summary(state, prompt, 1024, notice) if summary else with_notice(prompt, notice)
         buttons = [(STATEMENT_ID, "Ver estado completo")]
         if len(state.pending_cuotas) > 1:
@@ -194,6 +196,7 @@ class CuotasFlow(BaseFlow[CuotasState]):
         if wamid:
             state.presented_cuota_id = state.selected_cuota_id
             state.presented_terms = _terms(cuota)
+            state.presented_bounds = (cuota.get("fechaInicio"), cuota.get("fechaFin"))
 
     async def _statement(self, phone: str, session: Session, state: CuotasState, notice: str = "") -> None:
         if notice:
@@ -292,7 +295,11 @@ class CuotasFlow(BaseFlow[CuotasState]):
             )
             return
         current = state.pending_cuotas[selected]
-        if state.presented_cuota_id != selected or state.presented_terms != _terms(current):
+        if (
+            state.presented_cuota_id != selected
+            or state.presented_terms != _terms(current)
+            or state.presented_bounds != (current.get("fechaInicio"), current.get("fechaFin"))
+        ):
             await self._instructions(
                 phone,
                 session,
@@ -329,6 +336,6 @@ class CuotasFlow(BaseFlow[CuotasState]):
             return
         cuota = state.pending_cuotas[selected]
         session.finish(
-            f"✓ Comprobante enviado para la cuota de *{cuota.get('periodo', '')}* ({_amount(cuota)}). "
+            f"✓ Comprobante enviado para la cuota de *{format_billing_period(cuota)}* ({_amount(cuota)}). "
             "Queda pendiente de validación por el club."
         )

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from .. import services_client as svc
+from ..formatting import format_date
 from ..services_client import ServicesAPIError
 from ..state import Session
 from ..webhook_parser import IncomingMessage
@@ -45,9 +46,7 @@ class ComunicadosFlow(BaseFlow[ComunicadosState]):
         lines = ["*Últimos comunicados del club:*", ""]
         for n in noticias[:5]:
             titulo = n.get("titulo", "Sin título")
-            fecha = n.get("fecha", "")
-            if fecha and len(fecha) >= 10:
-                fecha = fecha[:10]
+            fecha = format_date(n.get("fecha"), "")
             resumen = n.get("descripcion", "")
             if len(resumen) > 120:
                 resumen = resumen[:117] + "..."

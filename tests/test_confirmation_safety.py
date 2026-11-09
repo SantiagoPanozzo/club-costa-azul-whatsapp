@@ -32,7 +32,7 @@ async def test_changed_event_details_require_new_withdrawal_consent(transcript):
     transcript.api.get_eventos.return_value = [{**EVENT, "horaInicio": "11:00:00", "horaFin": "12:00:00"}]
     await transcript.send(eventos.WITHDRAW_YES)
     transcript.api.delete_inscripcion_evento.assert_not_awaited()
-    assert "11:00:00 - 12:00:00" in transcript.bodies[-1]
+    assert "11:00 - 12:00" in transcript.bodies[-1]
     await transcript.send(eventos.WITHDRAW_YES)
     transcript.api.delete_inscripcion_evento.assert_awaited_once_with("e1", "ei1")
     transcript.assert_single_responses(5)

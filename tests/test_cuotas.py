@@ -20,7 +20,8 @@ from tests.transcript import QUOTA
 
 
 def quota(index=1, **changes):
-    return {**deepcopy(QUOTA), "id": f"q{index}", "periodo": f"2026-{index:02}", **changes}
+    year, month = 2026 + (index - 1) // 12, (index - 1) % 12 + 1
+    return {**deepcopy(QUOTA), "id": f"q{index}", "periodo": f"{year}-{month:02}", **changes}
 
 
 def rows(payload):
@@ -76,7 +77,7 @@ async def test_multiple_normal_budget_three_messages(transcript):
     transcript.api.upload_comprobante.assert_not_awaited()
 
     second = await transcript.send("cuota_q2")
-    assert "2026-02" in transcript.bodies[1]
+    assert "02/2026" in transcript.bodies[1]
     assert "$123.45" in transcript.bodies[1]
     assert INSTRUCTIONS in transcript.bodies[1]
     assert button_ids(second) == [STATEMENT_ID, OTHER_ID, "global_menu"]
@@ -87,7 +88,7 @@ async def test_multiple_normal_budget_three_messages(transcript):
     transcript.api.upload_comprobante.assert_awaited_once_with(
         "s1", "q2", b"synthetic-receipt", "comprobante.pdf", "application/pdf"
     )
-    assert "2026-02" in transcript.bodies[-1]
+    assert "02/2026" in transcript.bodies[-1]
     assert "$123.45" in transcript.bodies[-1]
     assert "pendiente de validación por el club" in transcript.bodies[-1]
     assert "¿Qué querés hacer?" in transcript.bodies[-1]
@@ -99,7 +100,7 @@ async def test_singleton_normal_budget_two_messages_no_upload_until_media(transc
     first = await transcript.send("cuotas")
     assert transcript.session.flow_state.selected_cuota_id == "q1"
     assert transcript.session.flow_state.step == CuotasStep.AWAITING_COMPROBANTE
-    assert "2026-11" in transcript.bodies[0]
+    assert "11/2026" in transcript.bodies[0]
     assert "$100.00" in transcript.bodies[0]
     assert "Atrasada" in transcript.bodies[0]
     assert INSTRUCTIONS in transcript.bodies[0]
@@ -190,7 +191,7 @@ async def test_pending_selector_paginates_every_quota_over_ten(transcript):
     payload = await transcript.send(f"{PAGE_PREFIX}0")
     assert "cuota_q1" in {r["id"] for r in rows(payload)}
     await transcript.send("cuota_q29")
-    assert "2026-29" in transcript.bodies[-1]
+    assert "05/2028" in transcript.bodies[-1]
     assert_bounded(transcript)
 
 
@@ -214,7 +215,7 @@ async def test_stale_selected_quota_is_never_reattributed_when_receipt_arrives(t
     transcript.api.get_cuotas_socio.return_value = [quota(estado="Pagada"), quota(2)]
     await receipt(transcript)
     assert "ya no está pendiente" in transcript.bodies[-1]
-    assert "2026-02" in transcript.bodies[-1]
+    assert "02/2026" in transcript.bodies[-1]
     assert transcript.session.flow_state.selected_cuota_id == "q2"
     whatsapp_client.download_media.assert_not_awaited()
     transcript.api.upload_comprobante.assert_not_awaited()
@@ -243,7 +244,7 @@ async def test_invalid_receipt_has_no_api_calls_and_one_actionable_retry(transcr
     transcript.api.upload_comprobante.assert_not_awaited()
     assert transcript.session.active_flow == "cuotas"
     assert transcript.session.flow_state.selected_cuota_id == "q1"
-    assert "2026-11" in transcript.bodies[-1]
+    assert "11/2026" in transcript.bodies[-1]
     assert "$100.00" in transcript.bodies[-1]
     assert INSTRUCTIONS in transcript.bodies[-1]
     await receipt(transcript)
@@ -271,7 +272,7 @@ async def test_receipt_failure_modes_keep_association_and_support_retry(transcri
     assert transcript.session.active_flow == "cuotas"
     assert transcript.session.flow_state.selected_cuota_id == "q1"
     assert INSTRUCTIONS in transcript.bodies[-1]
-    assert "2026-11" in transcript.bodies[-1] and "$100.00" in transcript.bodies[-1]
+    assert "11/2026" in transcript.bodies[-1] and "$100.00" in transcript.bodies[-1]
     assert "¿Qué querés hacer?" not in transcript.bodies[-1]
     if failure in ("download", "oversize", "download_mime", "refresh"):
         transcript.api.upload_comprobante.assert_not_awaited()
@@ -339,16 +340,16 @@ async def test_latest_summary_fits_and_omitted_entries_are_available(transcript)
     transcript.api.get_cuotas_socio.return_value = cuotas
     await transcript.send("cuotas")
     assert "Última cuota" in transcript.bodies[0]
-    assert "2026-59" in transcript.bodies[0]
+    assert "11/2030" in transcript.bodies[0]
     assert "Otras cuotas: 58" in transcript.bodies[0]
-    assert "2026-01" in transcript.bodies[0]  # Selected association cannot be omitted.
+    assert "01/2026" in transcript.bodies[0]  # Selected association cannot be omitted.
     assert INSTRUCTIONS in transcript.bodies[0]
     assert await read_statement(transcript) == "\n".join(_entry(c) for c in cuotas)
     assert_bounded(transcript)
 
 
 async def test_compact_summary_and_lossless_statement_for_oversized_entry(transcript):
-    cuotas = [quota(), quota(2), quota(99, estado="Anulada", fechaVencimiento="long-date-" * 400)]
+    cuotas = [quota(), quota(2), quota(99, estado="Anulada", periodo="Período histórico detallado " * 200)]
     transcript.api.get_cuotas_socio.return_value = cuotas
     await transcript.send("cuotas")
     assert "3 cuotas registradas; 2 pendientes" in transcript.bodies[0]
@@ -358,11 +359,11 @@ async def test_compact_summary_and_lossless_statement_for_oversized_entry(transc
 
 
 async def test_singleton_compact_summary_keeps_period_cents_and_upload_instructions(transcript):
-    cuotas = [quota(monto=123.45), quota(99, estado="Pagada", fechaVencimiento="date" * 600)]
+    cuotas = [quota(monto=123.45), quota(99, estado="Pagada", periodo="Período histórico detallado " * 200)]
     transcript.api.get_cuotas_socio.return_value = cuotas
     await transcript.send("cuotas")
     assert "2 cuotas registradas; 1 pendientes" in transcript.bodies[0]
-    assert "2026-01" in transcript.bodies[0]
+    assert "01/2026" in transcript.bodies[0]
     assert "$123.45" in transcript.bodies[0]
     assert INSTRUCTIONS in transcript.bodies[0]
     assert await read_statement(transcript) == "\n".join(_entry(c) for c in cuotas)

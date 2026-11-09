@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from .. import services_client as svc
+from ..formatting import format_date
 from ..services_client import ServicesAPIError
 from ..state import Session
 from ..webhook_parser import IncomingMessage
@@ -58,7 +59,7 @@ class DatosPersonalesFlow(BaseFlow[DatosPersonalesState]):
         telefono = detalle.get("telefono") or "—"
         whatsapp = detalle.get("whatsapp") or "—"
         categoria = CATEGORIA_LABELS.get(detalle.get("categoria", ""), detalle.get("categoria", "—"))
-        fecha_nac = detalle.get("fechaNacimiento") or "—"
+        fecha_nac = format_date(detalle.get("fechaNacimiento"), "—")
         sociedad_medica = detalle.get("sociedadMedica") or "—"
 
         lines = [

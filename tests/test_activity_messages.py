@@ -330,7 +330,7 @@ async def test_generic_revalidation_cannot_bypass_new_full_class(transcript):
     transcript.assert_single_responses(3)
 
 
-@pytest.mark.parametrize("changes,detail", [({"costo": 200}, "$200"), ({"horaInicio": "08:00:00"}, "08:00-10:00")])
+@pytest.mark.parametrize("changes,detail", [({"costo": 200}, "$200"), ({"horaInicio": "08:00:00"}, "08:00 - 10:00")])
 async def test_generic_changed_details_need_renewed_consent(transcript, changes, detail):
     transcript.api.get_instancias_actividad.return_value = []
     await transcript.send("activities")
@@ -413,7 +413,7 @@ async def test_generic_withdrawal_changed_range_renews_consent(transcript):
     await transcript.send(flow.ACTION_CANCEL)
     await transcript.send("cancel_general_i1")
     await transcript.send(flow.CANCEL_CONFIRM_YES)
-    assert "La inscripción cambió" in transcript.bodies[-1] and "2099-12-02" in transcript.bodies[-1]
+    assert "La inscripción cambió" in transcript.bodies[-1] and "02/12/2099" in transcript.bodies[-1]
     transcript.api.delete_inscripcion.assert_not_awaited()
     await transcript.send(flow.CANCEL_CONFIRM_YES)
     transcript.api.delete_inscripcion.assert_awaited_once_with("i1")

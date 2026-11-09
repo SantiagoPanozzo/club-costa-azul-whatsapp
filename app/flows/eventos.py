@@ -13,6 +13,7 @@ from ..flow_ui import (
     paginate_rows,
     with_notice,
 )
+from ..formatting import format_date, format_time_range
 from ..services_client import ServicesAPIConflict, ServicesAPIError
 from ..state import Session
 from ..storing_client import storing_client as whatsapp_client
@@ -62,12 +63,10 @@ def _price(value: object) -> str:
 
 
 def _details(event: dict) -> str:
-    start = event.get("horaInicio") or "Sin definir"
-    end = event.get("horaFin")
     lines = [
         f"*{event.get('nombre') or 'Evento (detalle no disponible)'}*",
-        f"📅 Fecha: {event.get('fecha') or 'Sin definir'}",
-        f"🕐 Horario: {start}" + (f" - {end}" if end else ""),
+        f"📅 Fecha: {format_date(event.get('fecha'), 'Sin definir')}",
+        f"🕐 Horario: {format_time_range(event.get('horaInicio'), event.get('horaFin'), 'Sin definir')}",
         f"📍 Lugar: {event.get('nombreEspacio') or 'Sin definir'}",
         f"💲 Costo socio: ${_price(event.get('costoSocio'))}",
     ]
@@ -90,7 +89,7 @@ def _enrollment_event(inscription: dict, events: dict[str, dict]) -> dict:
 def _enrollment_details(inscription: dict, events: dict[str, dict]) -> str:
     return (
         _details(_enrollment_event(inscription, events))
-        + f"\nInscripción: {inscription.get('fechaInscripcion') or 'Fecha no disponible'}"
+        + f"\nInscripción: {format_date(inscription.get('fechaInscripcion'), 'Fecha no disponible')}"
         + f"\nEstado: {inscription.get('estado') or 'Sin información'}"
     )
 
@@ -177,7 +176,7 @@ class EventosFlow(BaseFlow[EventosState]):
             {
                 "id": f"{EVENT_PREFIX}{key}",
                 "title": str(e["nombre"]),
-                "description": f"{e.get('fecha', '')} - ${_price(e.get('costoSocio'))}",
+                "description": f"{format_date(e.get('fecha'))} - ${_price(e.get('costoSocio'))}",
             }
             for key, e in state.available_events.items()
         ]
@@ -303,7 +302,7 @@ class EventosFlow(BaseFlow[EventosState]):
                 "id": f"{WITHDRAW_PREFIX}{key}",
                 "title": str(_enrollment_event(i, state.events)["nombre"]),
                 "description": (
-                    f"{_enrollment_event(i, state.events).get('fecha') or 'Sin fecha'} · {i.get('estado', '')}"
+                    f"{format_date(_enrollment_event(i, state.events).get('fecha'))} · {i.get('estado', '')}"
                 ),
             }
             for key, i in state.enrolled_events.items()

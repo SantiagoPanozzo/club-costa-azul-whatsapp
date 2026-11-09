@@ -7,6 +7,7 @@ from enum import StrEnum
 from .. import services_client as svc
 from ..date_parser import parse_flexible_date
 from ..flow_ui import MENU_ID, confirmation_buttons, paginate_rows, with_notice
+from ..formatting import format_date, format_time_range
 from ..services_client import ServicesAPIConflict, ServicesAPIError
 from ..state import Session
 from ..storing_client import storing_client as whatsapp_client
@@ -311,8 +312,8 @@ class ReservasFlow(BaseFlow[ReservasState]):
         body = (
             "¿Confirmás tu reserva?\n\n"
             f"📍 Espacio: *{space['nombre']}*\n"
-            f"📅 Fecha: {date.fromisoformat(state.selected_date):%d/%m/%Y}\n"
-            f"🕐 Horario: {state.start_time} - {state.end_time}\n"
+            f"📅 Fecha: {format_date(state.selected_date)}\n"
+            f"🕐 Horario: {format_time_range(state.start_time, state.end_time)}\n"
             f"👥 Personas: {state.cant_personas} (capacidad: {space.get('capacidad', '?')})\n"
             f"📝 Motivo: {state.motivo}\n"
             f"💲 Costo: ${space.get('costo', 0)}"
@@ -381,7 +382,7 @@ class ReservasFlow(BaseFlow[ReservasState]):
             session.finish(GENERIC_ERROR, outcome="error")
             return FlowResult.DONE
         session.finish(
-            f"¡Reserva registrada! *{fresh['nombre']}* para el {date.fromisoformat(state.selected_date):%d/%m/%Y}. "
+            f"¡Reserva registrada! *{fresh['nombre']}* para el {format_date(state.selected_date)}. "
             "Queda pendiente de aprobación por el club."
         )
         return FlowResult.DONE
@@ -419,7 +420,7 @@ class ReservasFlow(BaseFlow[ReservasState]):
                 {
                     "id": f"{RESERVA_PREFIX}{r['id']}",
                     "title": str(r.get("nombreEspacio", "Espacio")),
-                    "description": f"{r.get('fecha', '')} {self._reservation_time(r)} - {r.get('estado', '')}",
+                    "description": f"{format_date(r.get('fecha'))} {self._reservation_time(r)} - {r.get('estado', '')}",
                 }
                 for r in state.reservas.values()
             ],
@@ -439,10 +440,7 @@ class ReservasFlow(BaseFlow[ReservasState]):
 
     @staticmethod
     def _reservation_time(reserva: dict) -> str:
-        start, end = reserva.get("horaInicio"), reserva.get("horaFin")
-        if start or end:
-            return f"{start or '?'} - {end or '?'}"
-        return "Horario no informado"
+        return format_time_range(reserva.get("horaInicio"), reserva.get("horaFin"))
 
     async def _handle_reserva_selection(
         self, phone: str, session: Session, state: ReservasState, msg: IncomingMessage
@@ -480,7 +478,7 @@ class ReservasFlow(BaseFlow[ReservasState]):
         state.step = ReservasStep.AWAITING_CANCEL_CONFIRM
         body = (
             f"📍 *{reserva.get('nombreEspacio', 'Espacio')}*\n"
-            f"📅 Fecha: {reserva.get('fecha', '')}\n"
+            f"📅 Fecha: {format_date(reserva.get('fecha'))}\n"
             f"🕐 Horario: {self._reservation_time(reserva)}\n"
             f"Estado: {reserva.get('estado', '')}\n\n"
             "¿Querés cancelar esta reserva?"

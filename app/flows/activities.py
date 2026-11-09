@@ -14,6 +14,7 @@ from ..flow_ui import (
     paginate_rows,
     with_notice,
 )
+from ..formatting import format_date, format_date_weekday, format_schedule, format_time_range
 from ..services_client import (
     ServicesAPIBadRequest,
     ServicesAPIConflict,
@@ -33,8 +34,6 @@ SESION_VENCIDA = "La selección venció. Volvé a Actividades para consultar los
 NO_DISPONIBLE = "Esa clase o inscripción ya no está disponible. Revisá Mis inscripciones."
 SIN_CUPO = "La clase ya no tiene cupo disponible. Elegí otra clase."
 _ZONA_CLUB = ZoneInfo("America/Montevideo")
-_DIAS = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
-_DIA_LABELS = {0: "Dom", 1: "Lun", 2: "Mar", 3: "Mié", 4: "Jue", 5: "Vie", 6: "Sáb"}
 
 ACTIVITY_PREFIX = "act_"
 INSTANCIA_PREFIX = "clase_"
@@ -49,11 +48,7 @@ PAGINA_PREFIX = "act_pagina_"
 
 
 def _format_horario(actividad: dict) -> str:
-    dias = ", ".join(_DIA_LABELS.get(d, str(d)) for d in actividad.get("diasSemana") or [])
-    inicio = str(actividad.get("horaInicio") or "")[:5]
-    fin = str(actividad.get("horaFin") or "")[:5]
-    horario = f"{inicio}-{fin}" if inicio and fin else inicio
-    return " ".join(p for p in (dias, horario) if p) or "Horario no definido"
+    return format_schedule(actividad)
 
 
 def _inicio_clase(clase: dict) -> datetime | None:
@@ -76,8 +71,7 @@ def _formato_clase(clase: dict) -> str:
     inicio = _inicio_clase(clase)
     if inicio is None:
         return "Clase sin fecha disponible"
-    fin = str(clase.get("horaFin") or "")[:5]
-    return f"{_DIAS[inicio.weekday()]} {inicio:%d/%m/%Y} {inicio:%H:%M}-{fin}"
+    return f"{format_date_weekday(inicio)} {format_time_range(inicio.time(), clase.get('horaFin'))}"
 
 
 def _recortar(texto: str, limite: int) -> str:
@@ -157,7 +151,7 @@ def _detalle_inscripcion(inscripcion: dict) -> str:
     if not inscripcion.get("instanciaId"):
         for campo, titulo in (("fechaInicio", "Desde"), ("fechaFin", "Hasta")):
             if inscripcion.get(campo):
-                extras.append(f"{titulo}: {inscripcion[campo]}")
+                extras.append(f"{titulo}: {format_date(inscripcion[campo])}")
     return " · ".join([detalle, etiqueta, *extras])
 
 
@@ -251,7 +245,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
             opciones = [
                 {
                     "id": f"{INSTANCIA_PREFIX}{id_}",
-                    "title": f"Clase {str(c['fecha'])[8:10]}/{str(c['fecha'])[5:7]}",
+                    "title": f"Clase {format_date(c['fecha'])}",
                     "description": f"{_formato_clase(c)} · {c['cupoDisponible']} lugares",
                 }
                 for id_, c in estado.instancias_disponibles.items()
@@ -501,7 +495,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
                     return FlowResult.DONE
                 if any(
                     actividad_actual.get(campo) != actividad.get(campo)
-                    for campo in ("nombre", "costo", "horaInicio", "horaFin", "diasSemana")
+                    for campo in ("nombre", "costo", "horaInicio", "horaFin", "diasSemana", "horarios")
                 ):
                     estado.selected_activity = actividad_actual
                     await self._pedir_confirmacion(
