@@ -25,7 +25,7 @@ Reference payload shape (messages event):
             "button_reply": {"id": "...", "title": "..."}
           }
         }],
-        # delivery/read receipts arrive as "statuses" instead of "messages" -> ignored
+        # delivery/read receipts arrive as "statuses" instead of "messages"
       }
     }]
   }]
@@ -68,6 +68,16 @@ def extract_metadata(payload: dict) -> list[dict]:
             if isinstance(meta, dict):
                 metas.append(meta)
     return metas
+
+
+def extract_statuses(payload: dict) -> list[dict]:
+    results = []
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            statuses = change.get("value", {}).get("statuses")
+            if isinstance(statuses, list):
+                results.extend(status for status in statuses if isinstance(status, dict))
+    return results
 
 
 def extract_messages(payload: dict) -> list[IncomingMessage]:

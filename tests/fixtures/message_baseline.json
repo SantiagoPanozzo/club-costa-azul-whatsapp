@@ -1,0 +1,21 @@
+{
+  "commit": "0233f2f",
+  "scope": "Authenticated tasks from an already-visible main menu, including completion menu; no retries, pagination or overflow.",
+  "tasks": {
+    "reservation_create": 10,
+    "reservation_cancel": 5,
+    "class_single": 7,
+    "class_multiple": 7,
+    "activity_generic": 6,
+    "activity_withdraw": 6,
+    "event_enroll": 7,
+    "event_withdraw": 5,
+    "receipt_single": 6,
+    "receipt_multiple": 6,
+    "personal_data": 3,
+    "announcements": 3,
+    "account_summary": 2,
+    "welcome": 2,
+    "help": 1
+  }
+}

@@ -9,7 +9,7 @@ User message
   → webhook_parser (raw payload → IncomingMessage)
   → conversation.handle_message (router)
       → sign-in check (auto-identify by phone number)
-      → global keyword middleware ("menu", "volver", etc.)
+      → global keyword middleware ("menu", "ayuda", etc.)
       → active flow dispatch (or main menu if no flow is active)
 ```
 
@@ -23,7 +23,7 @@ User message
 ### Message handling chain
 
 1. **Sign-in**: If `session.socio` is `None`, look up the user by phone number. No further processing.
-2. **Global keywords**: If the user texts "menu", "volver", etc., end the current flow and show the main menu.
+2. **Global keywords**: "menu", "menú" and "inicio", or the explicit `global_menu` button, exit to the main menu. "ayuda"/"help" shows help. Volver buttons belong to each flow and return to its previous selector, not the main menu.
 3. **Active flow**: If `session.active_flow` is set, dispatch to that flow's `handle()` method.
 4. **Menu selection**: If the user picked a menu item whose `id` matches a flow registry key, enter that flow.
 5. **Fallback**: Show the main menu.
@@ -86,6 +86,11 @@ Key rules:
 - `handle()` returns `FlowResult.CONTINUE` to stay in the flow, `FlowResult.DONE` to return to the main menu.
 - Use `self.get_state(session)` to retrieve the typed state inside `handle()`.
 - When `handle()` returns `DONE`, the router automatically sends the main menu — don't send it yourself.
+- To finish, call `session.finish("Resultado en español", outcome="success")` and return `DONE`. The router puts the result and menu in one message. An immediate `enter()` result also uses `session.finish()` and returns `None`.
+- Use explicit outcomes such as `error`, `empty`, `unavailable` or `conflict`; a bare `DONE` has an `unknown` outcome, not a fabricated success.
+- Send through `storing_client`, always passing `session=session`, so every wire attempt belongs to its task run.
+- Build confirmation buttons with `confirmation_buttons(YES, BACK, session=session)` from `flow_ui`. Accept writes only after `session.consume_confirmation(msg.interactive_id, YES)` succeeds. Nonces bind consent to the current selection/terms; do not accept the unversioned action ID.
+- Catalog/list rendering clears old confirmations; changed terms consume the old version and issue a fresh one. A plain invalid-input retry may reuse the unchanged current version.
 
 ### 3. Register the flow
 
@@ -121,12 +126,13 @@ The menu item `id` must match the `FLOW_REGISTRY` key exactly — this is how th
 
 ## Actividades: clases puntuales (KAN-271)
 
-- El menú de Actividades ofrece **Inscribirme** y **Mis inscripciones**. Una actividad
+- Actividades abre directamente el catálogo con una opción **Mis inscripciones**. Una actividad
   no se excluye por tener otra inscripción ni por su cupo genérico: al elegirla se
   consulta `GET /actividades/{id}/instancias`, con `cupoDisponible` por clase.
 - Se ofrecen clases futuras `Programada`, no liquidadas, con cupo y aún no cubiertas
   por una inscripción activa. Fechas y horarios usan `America/Montevideo` y días en
-  español. La selección tiene paginación de ocho filas más navegación (máximo diez).
+  español. Una única clase elegible pasa directamente a confirmación, sin alta automática.
+  La selección pagina reservando filas para navegación y acceso al catálogo (máximo diez en total).
 - El POST envía `{ socioId, actividadId, instanciaId }`. Si no hay clases futuras
   programadas, conserva `{ socioId, actividadId }` y confirma explícitamente una
   inscripción general. **Las clases llenas/cerradas/ya cubiertas no habilitan ese
@@ -134,8 +140,9 @@ The menu item `id` must match the `FLOW_REGISTRY` key exactly — this is how th
 - Mis inscripciones muestra cada clase con actividad, fecha, horario y bajas. Para
   genéricas se muestra también una opción separada para cancelar el rango completo.
   Las clases cubiertas por una genérica aparecen individualmente y se deduplican si
-  se superponen con una inscripción específica. No se ofrecen filas canceladas,
-  clases pasadas ni bajas ya registradas para cancelar de nuevo.
+  se superponen con una inscripción específica. Las inscripciones históricas,
+  clases pasadas y bajas registradas siguen accesibles como detalle de solo lectura;
+  nunca desplazan una opción activa ni habilitan cancelar de nuevo.
 - Una baja de clase llama `DELETE /instancias/{id}/inscripcion?socioId={socioId}` con
   `X-Api-Key`; nunca usa `DELETE /inscripciones/{id}`. Esa última operación se conserva
   solo para cancelar explícitamente una inscripción **genérica completa**.
@@ -154,4 +161,5 @@ The menu item `id` must match the `FLOW_REGISTRY` key exactly — this is how th
 - Flow-specific constants (button IDs, prefixes) live in the flow module, not in shared constants.
 - Errors from the services API should be caught, logged, and result in a generic error message to the user. Don't leak internal details.
 - WhatsApp limits: button titles max 20 chars, list row titles max 24 chars, list row descriptions max 72 chars, max 3 buttons, max 10 list rows. These are enforced by `whatsapp_client.py` via truncation, but keep your text concise.
-- Use `session.end_flow()` if a flow needs to exit early (e.g., no data available). The router will handle showing the menu.
+- Use `session.finish(body, outcome)` for an early terminal result. `end_flow()` only clears volatile state; it does not declare a successful task.
+- Shared bounded summaries, navigation, message budgets and telemetry are documented in [message-efficiency.md](message-efficiency.md).

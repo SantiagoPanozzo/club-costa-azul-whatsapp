@@ -1,5 +1,6 @@
 """Environment-based configuration."""
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,6 +11,7 @@ class Settings(BaseSettings):
     whatsapp_api_token: str
     whatsapp_phone_number_id: str
     whatsapp_api_version: str = "v20.0"
+    whatsapp_list_body_limit: int = Field(default=1024, ge=1024, le=4096)
 
     # Club Costa Azul services API (socios / actividades / inscripciones)
     services_api_base_url: str
