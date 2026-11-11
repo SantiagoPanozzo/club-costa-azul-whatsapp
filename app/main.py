@@ -10,7 +10,7 @@ from .config import settings
 from .conversation import handle_message
 from .services_client import services_client
 from .storing_client import storing_client
-from .webhook_parser import extract_messages, extract_metadata
+from .webhook_parser import extract_messages, extract_metadata, extract_statuses
 from .whatsapp_client import whatsapp_client
 
 logging.basicConfig(level=settings.log_level)
@@ -59,6 +59,8 @@ async def webhook(request: Request):
             )
 
     try:
+        for status in extract_statuses(payload):
+            await message_store.store_status(status)
         incoming_messages = extract_messages(payload)
     except Exception:
         logger.exception("Failed to parse incoming webhook payload: %s", payload)

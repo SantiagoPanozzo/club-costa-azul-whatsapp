@@ -9,3 +9,13 @@ for key, value in {
     "MONGODB_URL": "mongodb://127.0.0.1:27017/test",
 }.items():
     os.environ.setdefault(key, value)
+
+
+import pytest  # noqa: E402
+
+from tests.transcript import Transcript  # noqa: E402
+
+
+@pytest.fixture
+def transcript(monkeypatch):
+    return Transcript(monkeypatch)

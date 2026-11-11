@@ -38,7 +38,7 @@ This service does **not** handle Meta webhook verification or receive Meta's web
 
 - **`app/main.py`** — FastAPI app with `/webhook` (POST) and `/health` (GET). Always returns 200 to prevent upstream retries.
 - **`app/conversation.py`** — Thin router: sign-in → global keyword middleware → flow dispatch → main menu. Entry point: `handle_message()`. Does not contain flow logic.
-- **`app/state.py`** — In-memory `SessionStore` keyed by phone number. `Session` holds `socio`, `active_flow` (registry key), and `flow_state` (typed per-flow dataclass). Thread-safe via `threading.Lock`. Volatile (lost on restart). Replace with Redis/DB for production, keeping `get`/`reset` interface.
+- **`app/state.py`** — In-memory `SessionStore` keyed by phone number, with per-phone `asyncio.Lock`. `Session` holds member/flow state, versioned confirmation IDs, deferred completion and task counters. Conversation state remains volatile; Mongo history/telemetry does not persist the state machine.
 - **`app/flows/base.py`** — `BaseFlow[T]` ABC (generic over the flow's state dataclass) and `FlowResult` StrEnum. All flows subclass this.
 - **`app/flows/activities.py`** — Activity sign-up flow. `ActivitiesStep` StrEnum, `ActivitiesState` dataclass, `ActivitiesFlow` implementation.
 - **`app/flows/__init__.py`** — `FLOW_REGISTRY` mapping menu item IDs to flow instances. Adding a flow = one entry here + one `MENU_OPTIONS` row in `conversation.py`.
@@ -64,11 +64,22 @@ old selections. See `docs/flows.md` for contracts and pagination.
 
 ### WhatsApp API constraints
 
+KAN-242: catalogs open immediately, summaries adapt to the body budget, singleton
+class/cuota choices skip redundant selectors, and completion shares the main-menu
+message. Use `session.finish(body, outcome)` instead of sending terminal text.
+Confirmation buttons must use `confirmation_buttons(..., session=session)` and
+writes must consume the exact versioned ID with `session.consume_confirmation`.
+Do not send actionable controls after an unconfirmed required overflow send.
+See `docs/message-efficiency.md` for tested budgets, telemetry and Mongo queries.
+
 - Button titles: max 20 chars
 - List section titles: max 24 chars
 - List row descriptions: max 72 chars
 - Max 3 buttons per message, max 10 rows per list
 - These limits are enforced via `_truncate()` in `whatsapp_client.py`.
+- The storing wrapper splits necessary overflow losslessly. Bodies are bounded:
+  text 4096, buttons 1024, lists conservatively 1024 for the current API version.
+  `WHATSAPP_LIST_BODY_LIMIT` can be raised only after verifying version support.
 
 ## Environment Variables
 
