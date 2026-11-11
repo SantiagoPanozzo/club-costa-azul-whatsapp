@@ -14,9 +14,34 @@ from app.flows.reservas import (
     SPACE_PAGE_PREFIX,
     ReservasStep,
     _parse_time_range,
+    _reservable,
 )
 from app.services_client import ServicesAPIConflict, ServicesAPIError
 from tests.transcript import SPACE
+
+
+@pytest.mark.parametrize(
+    ("space", "expected"),
+    [
+        ({"estado": "Disponible"}, True),
+        ({"estado": "Disponible", "reservable": True}, True),
+        ({"estado": "Disponible", "reservable": False}, False),
+        ({"estado": "Mantenimiento", "reservable": True}, False),
+        ({"estado": "Mantenimiento"}, False),
+    ],
+)
+def test_reservable_requires_availability_and_no_explicit_opt_out(space, expected):
+    assert _reservable(space) is expected
+
+
+def test_reservable_filter_preserves_order():
+    spaces = [
+        {"id": "e1", "estado": "Disponible"},
+        {"id": "e2", "estado": "Disponible", "reservable": True},
+        {"id": "e3", "estado": "Disponible", "reservable": False},
+        {"id": "e4", "estado": "Mantenimiento", "reservable": True},
+    ]
+    assert [space["id"] for space in spaces if _reservable(space)] == ["e1", "e2"]
 
 
 def rows(payload):
