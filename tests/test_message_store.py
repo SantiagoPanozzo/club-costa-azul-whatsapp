@@ -34,8 +34,15 @@ class DuplicateCollection(FakeCollection):
 
 
 class FakeConversations:
+    def __init__(self):
+        self.increments = []
+
     async def find_one_and_update(self, *args, **kwargs):
+        assert "$inc" not in args[1]
         return {"_id": "conv-1"}
+
+    async def update_one(self, *args, **kwargs):
+        self.increments.append((args, kwargs))
 
 
 async def test_wamid_index_is_partial_and_replaces_legacy_sparse_index(monkeypatch):

@@ -7,9 +7,11 @@ and dispatches to the active flow.
 
 import logging
 import traceback
+from uuid import uuid4
 
 from . import message_store
 from . import services_client as svc
+from .flow_ui import MENU_ID
 from .flows import FLOW_REGISTRY, FlowResult
 from .services_client import ServicesAPIError
 from .state import Session, sessions
@@ -66,7 +68,6 @@ GLOBAL_KEYWORDS: dict[str, str] = {
     "menu": "menu",
     "menú": "menu",
     "inicio": "menu",
-    "volver": "menu",
     "ayuda": "ayuda",
     "help": "ayuda",
 }
@@ -107,48 +108,81 @@ async def handle_message(incoming: IncomingMessage) -> None:
     async with sessions.lock_for(phone):
         session = sessions.get(phone)
 
+        session.turn_id = str(uuid4())
+        session.response_role = "content"
+        entry_flow = (
+            incoming.interactive_id if incoming.interactive_id in FLOW_REGISTRY else _match_text_to_flow(incoming)
+        )
+        new_run = session.socio is not None and session.active_flow is None and entry_flow in FLOW_REGISTRY
+        if new_run:
+            session.begin_run(entry_flow)
+
         is_new = await message_store.store_incoming(incoming, session)
         if not is_new:
+            if new_run:
+                session.run = None
             return
 
-        if session.socio is None:
-            await _sign_in(phone, session, incoming)
-            return
+        if session.run is not None:
+            session.run.incoming_messages += 1
 
-        global_action = _handle_global_keyword(incoming, session)
-        if global_action == "menu":
-            await _send_main_menu(phone, session)
-            return
-        if global_action == "ayuda":
+        try:
+            await _route_message(phone, session, incoming)
+        except Exception:
+            session.close_run("error")
             session.end_flow()
-            await whatsapp_client.send_text(phone, HELP_TEXT, session=session)
-            return
+            session.completion = None
+            raise
+        finally:
+            await message_store.save_run(session.run, phone)
+            if session.run is not None and session.run.outcome != "in_progress":
+                session.run = None
 
-        if session.active_flow is not None:
-            await _dispatch_to_flow(phone, session, incoming)
-            return
 
-        if incoming.interactive_id and incoming.interactive_id == "ayuda":
-            await whatsapp_client.send_text(phone, HELP_TEXT, session=session)
-            return
+async def _route_message(phone: str, session: Session, incoming: IncomingMessage) -> None:
+    if session.socio is None:
+        await _sign_in(phone, session, incoming)
+        return
 
-        if incoming.interactive_id and incoming.interactive_id in FLOW_REGISTRY:
-            await _enter_flow(phone, session, incoming.interactive_id)
-            return
-
-        text_flow = _match_text_to_flow(incoming)
-        if text_flow == "ayuda":
-            await whatsapp_client.send_text(phone, HELP_TEXT, session=session)
-            return
-        if text_flow:
-            await _enter_flow(phone, session, text_flow)
-            return
-
+    global_action = _handle_global_keyword(incoming, session)
+    if global_action == "menu":
+        session.close_run("abandoned")
         await _send_main_menu(phone, session)
+        return
+    if global_action == "ayuda":
+        session.close_run("abandoned")
+        session.end_flow()
+        await whatsapp_client.send_text(phone, HELP_TEXT, session=session)
+        return
+
+    if session.active_flow is not None:
+        await _dispatch_to_flow(phone, session, incoming)
+        return
+
+    if incoming.interactive_id and incoming.interactive_id == "ayuda":
+        await whatsapp_client.send_text(phone, HELP_TEXT, session=session)
+        return
+
+    if incoming.interactive_id and incoming.interactive_id in FLOW_REGISTRY:
+        await _enter_flow(phone, session, incoming.interactive_id)
+        return
+
+    text_flow = _match_text_to_flow(incoming)
+    if text_flow == "ayuda":
+        await whatsapp_client.send_text(phone, HELP_TEXT, session=session)
+        return
+    if text_flow:
+        await _enter_flow(phone, session, text_flow)
+        return
+
+    await _send_main_menu(phone, session)
 
 
 def _handle_global_keyword(incoming: IncomingMessage, session: Session) -> str | None:
     """Return the action name if a global keyword was matched, else None."""
+    if incoming.interactive_id == MENU_ID:
+        session.end_flow()
+        return "menu"
     if incoming.text is None:
         return None
     keyword = incoming.text.strip().lower()
@@ -182,24 +216,28 @@ async def _sign_in(phone: str, session: Session, incoming: IncomingMessage) -> N
     session.socio = socio
     nombre = socio.get("nombre", "")
     saludo = f"¡Hola, {nombre}!" if nombre else "¡Hola!"
-    await whatsapp_client.send_text(
-        phone,
-        f"{saludo} Bienvenido/a al bot del Club Costa Azul. Te ayudo a gestionar tus actividades.",
-        session=session,
+    await _send_main_menu(
+        phone, session, f"{saludo} Bienvenido/a al bot del Club Costa Azul. Te ayudo a gestionar tus actividades."
     )
-    await _send_main_menu(phone, session)
 
 
-async def _send_main_menu(phone: str, session: Session) -> None:
+async def _send_main_menu(phone: str, session: Session, body: str = "") -> None:
+    if session.completion is not None:
+        body = session.completion.body
+        session.completion = None
     session.end_flow()
-    await whatsapp_client.send_list(
-        to=phone,
-        body="¿Qué querés hacer?",
-        button_text="Ver opciones",
-        rows=MENU_OPTIONS,
-        section_title="Menú",
-        session=session,
-    )
+    session.response_role = "menu"
+    try:
+        await whatsapp_client.send_list(
+            to=phone,
+            body=f"{body}\n\n¿Qué querés hacer?" if body else "¿Qué querés hacer?",
+            button_text="Ver opciones",
+            rows=MENU_OPTIONS,
+            section_title="Menú",
+            session=session,
+        )
+    finally:
+        session.response_role = "content"
 
 
 async def _enter_flow(phone: str, session: Session, flow_name: str) -> None:
@@ -207,6 +245,8 @@ async def _enter_flow(phone: str, session: Session, flow_name: str) -> None:
     session.active_flow = flow_name
     await flow.enter(phone, session)
     if session.active_flow is None:
+        if session.run is not None and session.run.outcome == "in_progress":
+            session.close_run("unknown")
         await _send_main_menu(phone, session)
 
 
@@ -214,9 +254,12 @@ async def _dispatch_to_flow(phone: str, session: Session, incoming: IncomingMess
     flow = FLOW_REGISTRY.get(session.active_flow)  # type: ignore[arg-type]
     if flow is None:
         logger.warning("Unknown active flow %r for phone %s, resetting", session.active_flow, phone)
+        session.finish(GENERIC_ERROR, "error")
         await _send_main_menu(phone, session)
         return
 
     result = await flow.handle(phone, session, incoming)
     if result == FlowResult.DONE:
+        if session.run is not None and session.run.outcome == "in_progress":
+            session.close_run("unknown")
         await _send_main_menu(phone, session)
