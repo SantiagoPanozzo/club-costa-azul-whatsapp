@@ -5,6 +5,7 @@ import logging
 import httpx
 
 from .config import settings
+from .flow_ui import BUTTON_BODY_LIMIT, TEXT_BODY_LIMIT, list_body_limit
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +97,14 @@ class WhatsAppClient:
             resp = await self._client.post(self._url, json=payload)
             resp.raise_for_status()
             data = resp.json()
-            return data.get("messages", [{}])[0].get("id")
-        except httpx.HTTPError as exc:
+            messages = data.get("messages") if isinstance(data, dict) else None
+            if isinstance(messages, list) and messages and isinstance(messages[0], dict):
+                wamid = messages[0].get("id")
+                if isinstance(wamid, str) and wamid:
+                    return wamid
+            logger.error("Graph API response did not confirm a message ID")
+            return None
+        except (httpx.HTTPError, ValueError) as exc:
             body = getattr(exc, "response", None)
             body_text = body.text if body is not None else ""
             logger.error(
@@ -110,6 +117,8 @@ class WhatsAppClient:
             return None
 
     async def send_text(self, to: str, body: str) -> str | None:
+        if not 1 <= len(body) <= TEXT_BODY_LIMIT:
+            raise ValueError("Text body is outside WhatsApp limits")
         return await self._send(
             {
                 "messaging_product": "whatsapp",
@@ -121,6 +130,8 @@ class WhatsAppClient:
 
     async def send_buttons(self, to: str, body: str, buttons: list[tuple[str, str]]) -> str | None:
         """buttons: list of (id, title). Max 3 buttons, title max 20 chars (WhatsApp limit)."""
+        if not 1 <= len(body) <= BUTTON_BODY_LIMIT or not 1 <= len(buttons) <= 3:
+            raise ValueError("Interactive buttons are outside WhatsApp limits")
         return await self._send(
             {
                 "messaging_product": "whatsapp",
@@ -179,6 +190,8 @@ class WhatsAppClient:
         section_title: str = "Opciones",
     ) -> str | None:
         """rows: list of {"id": str, "title": str, "description": str}. Max 10 rows (WhatsApp limit)."""
+        if not 1 <= len(body) <= list_body_limit() or not 1 <= len(rows) <= 10:
+            raise ValueError("Interactive list is outside WhatsApp limits")
         return await self._send(
             {
                 "messaging_product": "whatsapp",

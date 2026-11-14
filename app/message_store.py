@@ -1,12 +1,14 @@
-"""Async MongoDB message storage — fire-and-forget writes for conversation traceability."""
+"""Best-effort, awaited Mongo storage for messages, task runs and delivery receipts."""
 
+import asyncio
 import logging
+from dataclasses import asdict
 from datetime import datetime, timezone
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from .config import settings
-from .state import Session
+from .state import Session, TaskRun, release_id
 from .webhook_parser import IncomingMessage
 
 logger = logging.getLogger(__name__)
@@ -15,6 +17,21 @@ _client: AsyncIOMotorClient = AsyncIOMotorClient(settings.mongodb_url)
 _db = _client.get_default_database("club_costa_azul")
 _conversations = _db["conversations"]
 _messages = _db["messages"]
+_task_runs = _db["task_runs"]
+_message_statuses = _db["message_statuses"]
+
+
+async def save_run(run: TaskRun | None, phone: str) -> None:
+    if run is None:
+        return
+    try:
+        data = asdict(run)
+        data["phone"] = phone
+        data["updated_at"] = datetime.now(timezone.utc)
+        async with asyncio.timeout(2):
+            await _task_runs.update_one({"_id": run.id}, {"$set": data}, upsert=True)
+    except Exception:
+        logger.exception("Failed to store task run")
 
 
 async def ensure_indexes() -> None:
@@ -22,6 +39,10 @@ async def ensure_indexes() -> None:
     await _conversations.create_index("last_message_at")
     await _messages.create_index([("conversation_id", 1), ("timestamp", 1)])
     await _messages.create_index([("phone", 1), ("timestamp", 1)])
+    await _messages.create_index([("task_run_id", 1), ("timestamp", 1)])
+    await _task_runs.create_index([("release", 1), ("flow", 1), ("task", 1), ("outcome", 1)])
+    await _task_runs.create_index("started_at")
+    await _message_statuses.create_index("wamid", unique=True)
     await _ensure_wamid_index()
 
 
@@ -60,6 +81,18 @@ def _socio_fields(session: Session) -> dict:
     return {"socio_id": str(socio.get("id", "")), "socio_nombre": full}
 
 
+def _task_fields(session: Session) -> dict:
+    run = session.run
+    return {
+        "task_run_id": run.id if run else None,
+        "turn_id": session.turn_id,
+        "flow": run.flow if run else session.active_flow,
+        "task": run.task if run else None,
+        "step": str(session.flow_state.step) if getattr(session.flow_state, "step", None) is not None else None,
+        "release": run.release if run else release_id(),
+    }
+
+
 async def _upsert_conversation(phone: str, contact_name: str | None, session: Session, now: datetime) -> str:
     result = await _conversations.find_one_and_update(
         {"phone": phone},
@@ -70,7 +103,6 @@ async def _upsert_conversation(phone: str, contact_name: str | None, session: Se
                 "contact_name": contact_name,
                 **_socio_fields(session),
             },
-            "$inc": {"message_count": 1},
         },
         upsert=True,
         return_document=True,
@@ -85,7 +117,7 @@ async def store_incoming(incoming: IncomingMessage, session: Session) -> bool:
         if incoming.timestamp:
             try:
                 now = datetime.fromtimestamp(int(incoming.timestamp), tz=timezone.utc)
-            except (ValueError, OSError):
+            except (ValueError, TypeError, OSError, OverflowError):
                 pass
 
         conv_id = await _upsert_conversation(incoming.phone, incoming.contact_name, session, now)
@@ -105,12 +137,14 @@ async def store_incoming(incoming: IncomingMessage, session: Session) -> bool:
             "timestamp": now,
             "type": incoming.type,
             "content": content,
-            "flow": session.active_flow,
+            **_task_fields(session),
         }
         if incoming.wamid:
             doc["wamid"] = incoming.wamid
 
         await _messages.insert_one(doc)
+        # Increment only after insertion: redelivered wamids are not messages.
+        await _conversations.update_one({"phone": incoming.phone}, {"$inc": {"message_count": 1}})
         return True
     except Exception as exc:
         if "duplicate key" in str(exc).lower() or "E11000" in str(exc):
@@ -139,11 +173,50 @@ async def store_outgoing(
             "timestamp": now,
             "type": msg_type,
             "content": content,
-            "flow": session.active_flow,
+            **_task_fields(session),
+            "response_role": session.response_role,
+            "send_status": "api_accepted" if wamid else "unconfirmed",
         }
         if wamid:
             doc["wamid"] = wamid
 
         await _messages.insert_one(doc)
+        await _conversations.update_one({"phone": phone}, {"$inc": {"message_count": 1}})
     except Exception:
         logger.exception("Failed to store outgoing message to %s", phone)
+
+
+async def store_status(status: dict) -> None:
+    """Idempotent status upsert, including receipts arriving before the message.
+
+    Keep independent flags/timestamps so a late sent/read/failed receipt cannot
+    erase a delivered receipt. Join to messages by wamid when reporting costs.
+    """
+    wamid, name = status.get("id"), status.get("status")
+    if (
+        not isinstance(wamid, str)
+        or not wamid
+        or not isinstance(name, str)
+        or name not in {"sent", "delivered", "read", "failed"}
+    ):
+        return
+    try:
+        timestamp = datetime.fromtimestamp(int(status["timestamp"]), tz=timezone.utc)
+    except (KeyError, ValueError, TypeError, OSError, OverflowError):
+        timestamp = datetime.now(timezone.utc)
+    fields = {f"statuses.{name}": timestamp}
+    if isinstance(status.get("recipient_id"), str):
+        fields["recipient_id"] = status["recipient_id"]
+    pricing = status.get("pricing")
+    if isinstance(pricing, dict):
+        for key in ("billable", "pricing_model", "category", "type"):
+            value = pricing.get(key)
+            if (key == "billable" and isinstance(value, bool)) or (key != "billable" and isinstance(value, str)):
+                fields[f"pricing.{key}"] = value
+    try:
+        async with asyncio.timeout(2):
+            await _message_statuses.update_one(
+                {"_id": wamid}, {"$setOnInsert": {"wamid": wamid}, "$set": fields}, upsert=True
+            )
+    except Exception:
+        logger.exception("Failed to store delivery status")

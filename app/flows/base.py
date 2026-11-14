@@ -26,11 +26,15 @@ class BaseFlow(ABC, Generic[T]):
 
     @abstractmethod
     async def enter(self, phone: str, session: Session) -> None:
-        """Called when the user enters this flow. Must set session.flow_state."""
+        """Set state and send its first prompt, or session.finish() for an immediate result."""
 
     @abstractmethod
     async def handle(self, phone: str, session: Session, msg: IncomingMessage) -> FlowResult:
-        """Handle a message while this flow is active."""
+        """Handle a turn; finish with session.finish(body, outcome) and return DONE.
+
+        Do not send a terminal text separately: the router composes it with the
+        main menu, retaining task-run attribution until that message is recorded.
+        """
 
     def get_state(self, session: Session) -> T:
         return cast(T, session.flow_state)
