@@ -67,3 +67,26 @@ async def test_storage_failure_is_contained(monkeypatch):
     await asyncio.gather(*list(usage_metrics._pending))
     assert collection.insert_one.await_args.args[0]["identification"] == "unknown"
     await usage_metrics.close()
+
+
+@pytest.mark.asyncio
+async def test_feature_ids_are_event_specific_and_duplicate_safe(monkeypatch):
+    import asyncio
+
+    collection = AsyncMock()
+    monkeypatch.setattr(usage_metrics, "_collection", collection)
+    monkeypatch.setattr(usage_metrics.settings, "metrics_hmac_key", "synthetic-key")
+    await usage_metrics.initialize()
+    usage_metrics.record_activity("phone", "wamid", "identified")
+    usage_metrics.record_feature("phone", "wamid", "activity.view")
+    usage_metrics.record_feature("phone", "wamid", "activity.view")
+    usage_metrics.record_feature("phone", "wamid", "activity.enroll")
+    usage_metrics.record_feature("phone", "wamid", "unrecognized")
+    await asyncio.gather(*list(usage_metrics._pending))
+    docs = [call.args[0] for call in collection.insert_one.await_args_list]
+    assert [doc["event"] for doc in docs] == ["bot.activity", "activity.view", "activity.view", "activity.enroll"]
+    assert docs[1]["event_id"] == docs[2]["event_id"]
+    assert len({docs[0]["event_id"], docs[1]["event_id"], docs[3]["event_id"]}) == 3
+    assert docs[0]["event_id"] == usage_metrics._digest("bot:activity:wamid")
+    assert all(doc["actor_id"] == docs[0]["actor_id"] for doc in docs)
+    await usage_metrics.close()

@@ -123,6 +123,7 @@ async def handle_message(incoming: IncomingMessage) -> None:
                 session.run = None
             return
 
+        session.metric_message_id = incoming.wamid
         if session.run is not None:
             session.run.incoming_messages += 1
 

@@ -46,13 +46,31 @@ async def _insert(document: dict) -> None:
         logger.debug("Usage metric was not stored")
 
 
-def record_activity(phone: str, wamid: str | None, identification: str) -> None:
-    """Queue an incoming-message event without delaying the conversation."""
+_FEATURES = frozenset(
+    {
+        "activity.view",
+        "activity.enroll",
+        "activity.cancel",
+        "reservation.view",
+        "reservation.create",
+        "reservation.cancel",
+        "fees.view",
+        "receipt.submit",
+        "event.view",
+        "event.enroll",
+        "profile.view",
+        "announcements.view",
+    }
+)
+
+
+def _record(phone: str, wamid: str | None, identification: str, event: str) -> None:
     if not _ready or len(_pending) >= _max_pending:
         return
     if identification not in {"identified", "unidentified", "unknown"}:
         identification = "unknown"
-    event_id = _digest(f"bot:activity:{wamid}") if wamid else uuid4().hex
+    event_type = "activity" if event == "bot.activity" else event
+    event_id = _digest(f"bot:{event_type}:{wamid}") if wamid else uuid4().hex
     document = {
         "schema_version": 1,
         "event_id": event_id,
@@ -60,11 +78,29 @@ def record_activity(phone: str, wamid: str | None, identification: str) -> None:
         "channel": "bot",
         "actor_id": _digest(f"bot:actor:{phone}"),
         "identification": identification,
-        "event": "bot.activity",
+        "event": event,
     }
     task = asyncio.create_task(_insert(document))
     _pending.add(task)
     task.add_done_callback(_pending.discard)
+
+
+def record_activity(phone: str, wamid: str | None, identification: str) -> None:
+    """Queue an incoming-message event without delaying the conversation."""
+    try:
+        _record(phone, wamid, identification, "bot.activity")
+    except Exception:
+        logger.warning("Could not queue usage metric")
+
+
+def record_feature(phone: str, wamid: str | None, event: str) -> None:
+    """Queue an allowlisted event for an identified member, once per message and event."""
+    if event not in _FEATURES:
+        return
+    try:
+        _record(phone, wamid, "identified", event)
+    except Exception:
+        logger.warning("Could not queue usage metric")
 
 
 async def close() -> None:

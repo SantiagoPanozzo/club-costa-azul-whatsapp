@@ -3,9 +3,11 @@
 import json
 from datetime import date, timedelta
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
+from app import usage_metrics
 from app.flows import activities as a
 from app.flows import eventos as e
 from app.flows import reservas as r
@@ -33,8 +35,10 @@ TARGETS = {
 
 
 @pytest.mark.parametrize("task,target", TARGETS.items())
-async def test_completed_task_wire_budget(transcript, task, target):
+async def test_completed_task_wire_budget(transcript, task, target, monkeypatch):
     t = transcript
+    metrics = Mock()
+    monkeypatch.setattr(usage_metrics, "record_feature", metrics)
     if task == "reservation_create":
         await t.send("reservas")
         await t.send("esp_s1")
@@ -104,5 +108,24 @@ async def test_completed_task_wire_budget(transcript, task, target):
             }[task]
         )
     t.assert_single_responses(target)
+    expected = {
+        "reservation_create": {"reservation.view", "reservation.create"},
+        "reservation_cancel": {"reservation.view", "reservation.cancel"},
+        "class_single": {"activity.view", "activity.enroll"},
+        "class_multiple": {"activity.view", "activity.enroll"},
+        "activity_generic": {"activity.view", "activity.enroll"},
+        "activity_withdraw": {"activity.view", "activity.cancel"},
+        "event_enroll": {"event.view", "event.enroll"},
+        "event_withdraw": {"event.view"},
+        "receipt_single": {"fees.view", "receipt.submit"},
+        "receipt_multiple": {"fees.view", "receipt.submit"},
+        "personal_data": {"profile.view"},
+        "announcements": {"announcements.view"},
+        "account_summary": {"fees.view"},
+        "welcome": set(),
+        "help": set(),
+    }
+    assert {call.args[2] for call in metrics.call_args_list} == expected[task]
+    assert all(call.args[1].startswith("synthetic-in-") for call in metrics.call_args_list)
     assert target <= BASELINE["tasks"][task]
     assert t.session.active_flow is None
