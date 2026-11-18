@@ -5,7 +5,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import message_store
+from . import message_store, usage_metrics
 from .config import settings
 from .conversation import handle_message
 from .services_client import services_client
@@ -22,6 +22,7 @@ app = FastAPI(title="Club Costa Azul WhatsApp Bot")
 @app.on_event("startup")
 async def startup():
     await message_store.ensure_indexes()
+    await usage_metrics.initialize()
     try:
         await whatsapp_client.check_phone_number()
     except Exception:
@@ -79,4 +80,5 @@ async def webhook(request: Request):
 async def shutdown():
     await services_client.aclose()
     await storing_client.aclose()
+    await usage_metrics.close()
     await message_store.close()

@@ -36,6 +36,7 @@ class Completion:
 @dataclass
 class Session:
     socio: dict[str, object] | None = None
+    member_lookup_status: str = "unknown"
     active_flow: str | None = None
     flow_state: object = None
     completion: Completion | None = None

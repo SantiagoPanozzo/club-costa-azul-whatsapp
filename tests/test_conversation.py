@@ -68,6 +68,38 @@ async def test_duplicate_entry_does_not_create_persisted_run(transcript):
     transcript.runs.assert_not_awaited()
 
 
+@pytest.mark.parametrize(
+    "lookup_result,lookup_error,expected",
+    [
+        ({"id": "member", "nombre": "Prueba"}, None, "identified"),
+        (None, None, "unidentified"),
+        (None, ServicesAPIError("failure"), "unknown"),
+    ],
+)
+async def test_activity_classification_follows_member_lookup(
+    transcript, monkeypatch, lookup_result, lookup_error, expected
+):
+    from unittest.mock import Mock
+
+    record = Mock()
+    monkeypatch.setattr(conversation.usage_metrics, "record_activity", record)
+    transcript.session.socio = None
+    transcript.api.get_socio_by_whatsapp.return_value = lookup_result
+    transcript.api.get_socio_by_whatsapp.side_effect = lookup_error
+    await transcript.send(text="hola")
+    assert record.call_args.args[2] == expected
+
+
+async def test_duplicate_message_never_records_activity(transcript, monkeypatch):
+    from unittest.mock import Mock
+
+    record = Mock()
+    monkeypatch.setattr(conversation.usage_metrics, "record_activity", record)
+    message_store.store_incoming.return_value = False
+    await transcript.send(text="hola")
+    record.assert_not_called()
+
+
 async def test_recovery_count_and_success_menu_belong_to_same_run(transcript):
     await transcript.send("activities")
     run = transcript.session.run
