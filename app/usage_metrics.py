@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -15,6 +16,8 @@ _collection = _db["usage_events"]
 _ready = False
 _pending: set[asyncio.Task] = set()
 _max_pending = 100
+_retry_task: asyncio.Task | None = None
+_next_retry = 0.0
 
 
 async def initialize() -> None:
@@ -65,7 +68,10 @@ _FEATURES = frozenset(
 
 
 def _record(phone: str, wamid: str | None, identification: str, event: str) -> None:
-    if not _ready or len(_pending) >= _max_pending:
+    if not _ready:
+        _retry_initialization()
+        return
+    if len(_pending) >= _max_pending:
         return
     if identification not in {"identified", "unidentified", "unknown"}:
         identification = "unknown"
@@ -83,6 +89,16 @@ def _record(phone: str, wamid: str | None, identification: str, event: str) -> N
     task = asyncio.create_task(_insert(document))
     _pending.add(task)
     task.add_done_callback(_pending.discard)
+
+
+def _retry_initialization() -> None:
+    """Retry transient startup failures in the background, at most once per minute."""
+    global _retry_task, _next_retry
+    now = time.monotonic()
+    if not settings.metrics_hmac_key or now < _next_retry or (_retry_task and not _retry_task.done()):
+        return
+    _next_retry = now + 60
+    _retry_task = asyncio.create_task(initialize())
 
 
 def record_activity(phone: str, wamid: str | None, identification: str) -> None:
@@ -104,10 +120,14 @@ def record_feature(phone: str, wamid: str | None, event: str) -> None:
 
 
 async def close() -> None:
-    global _ready
+    global _ready, _retry_task, _next_retry
     _ready = False
     tasks = list(_pending)
+    if _retry_task is not None:
+        tasks.append(_retry_task)
     for task in tasks:
         task.cancel()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
+    _retry_task = None
+    _next_retry = 0.0

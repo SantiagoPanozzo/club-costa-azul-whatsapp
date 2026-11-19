@@ -31,6 +31,30 @@ async def test_index_failure_disables_writes(monkeypatch):
     usage_metrics.record_activity("synthetic-phone", "synthetic-wamid", "identified")
     assert not usage_metrics._ready
     collection.insert_one.assert_not_awaited()
+    await usage_metrics.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_initialization_retries_without_blocking_and_recovers(monkeypatch):
+    import asyncio
+
+    collection = AsyncMock()
+    collection.create_index.side_effect = [RuntimeError("offline"), None, None, None]
+    monkeypatch.setattr(usage_metrics, "_collection", collection)
+    monkeypatch.setattr(usage_metrics.settings, "metrics_hmac_key", "synthetic-key")
+    await usage_metrics.initialize()
+    assert not usage_metrics._ready
+    usage_metrics.record_activity("synthetic-phone", "wamid-1", "identified")
+    usage_metrics.record_activity("synthetic-phone", "wamid-2", "identified")
+    assert usage_metrics._retry_task is not None
+    await usage_metrics._retry_task
+    assert usage_metrics._ready
+    assert collection.create_index.await_count == 4
+    collection.insert_one.assert_not_awaited()
+    usage_metrics.record_activity("synthetic-phone", "wamid-3", "identified")
+    await asyncio.gather(*list(usage_metrics._pending))
+    collection.insert_one.assert_awaited_once()
+    await usage_metrics.close()
 
 
 @pytest.mark.asyncio
