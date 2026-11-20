@@ -6,6 +6,7 @@ from enum import StrEnum
 from zoneinfo import ZoneInfo
 
 from .. import services_client as svc
+from .. import usage_metrics
 from ..flow_ui import (
     MENU_ID,
     adaptive_summary,
@@ -310,6 +311,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
         # El cupo de actividad es genérico: no determina el cupo de sus clases.
         # Tener otra inscripción en la actividad tampoco impide elegir otra clase.
         estado.available_activities = {str(a["id"]): a for a in actividades if a.get("estado") == "Activa"}
+        usage_metrics.record_feature(phone, session.metric_message_id, "activity.view")
         if not estado.available_activities and not inscripciones:
             session.finish("No hay actividades disponibles en este momento.", "empty")
             return FlowResult.DONE
@@ -515,6 +517,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
             session.finish(GENERIC_ERROR, "error")
             return FlowResult.DONE
         detalle = f" · {_formato_clase(clase)}" if clase else " (inscripción general)"
+        usage_metrics.record_feature(phone, session.metric_message_id, "activity.enroll")
         session.finish(f"¡Listo! Quedaste inscripto/a en *{actividad['nombre']}*{detalle}.")
         return FlowResult.DONE
 
@@ -527,6 +530,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
             session.finish(GENERIC_ERROR, "error")
             return FlowResult.DONE
         estado.active_inscriptions = _opciones_inscripciones(inscripciones, estado.available_activities)
+        usage_metrics.record_feature(phone, session.metric_message_id, "activity.view")
         estado.step = ActivitiesStep.AWAITING_CANCEL_CHOICE
         await self._enviar_pagina(phone, session, estado, "inscripciones")
         return FlowResult.CONTINUE
@@ -656,6 +660,7 @@ class ActivitiesFlow(BaseFlow[ActivitiesState]):
             logger.warning("No se pudo confirmar la baja de la inscripción")
             session.finish(GENERIC_ERROR, "error")
             return FlowResult.DONE
+        usage_metrics.record_feature(phone, session.metric_message_id, "activity.cancel")
         mensaje = (
             "Te diste de baja solo de esa clase. Tus otras inscripciones siguen activas."
             if instancia_id

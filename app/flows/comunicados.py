@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from .. import services_client as svc
+from .. import usage_metrics
 from ..formatting import format_date
 from ..services_client import ServicesAPIError
 from ..state import Session
@@ -39,6 +40,7 @@ class ComunicadosFlow(BaseFlow[ComunicadosState]):
             session.finish(GENERIC_ERROR, "error")
             return
 
+        usage_metrics.record_feature(phone, session.metric_message_id, "announcements.view")
         if not noticias:
             session.finish("No hay comunicados publicados en este momento.", "empty")
             return

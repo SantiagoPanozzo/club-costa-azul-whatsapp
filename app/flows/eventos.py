@@ -4,6 +4,7 @@ from datetime import date
 from enum import StrEnum
 
 from .. import services_client as svc
+from .. import usage_metrics
 from ..flow_ui import (
     BUTTON_BODY_LIMIT,
     MENU_ID,
@@ -154,6 +155,7 @@ class EventosFlow(BaseFlow[EventosState]):
             session.mark_recovery()
         if refresh and not await self._load(session, state):
             return FlowResult.DONE
+        usage_metrics.record_feature(phone, session.metric_message_id, "event.view")
         state.step = EventosStep.AWAITING_CHOICE
         state.selected_event = None
         state.accepted_description = None
@@ -284,6 +286,7 @@ class EventosFlow(BaseFlow[EventosState]):
             logger.warning("Error creating event inscription", exc_info=True)
             session.finish(GENERIC_ERROR, outcome="error")
         else:
+            usage_metrics.record_feature(phone, session.metric_message_id, "event.enroll")
             session.finish(f"¡Listo! Te inscribiste en *{event['nombre']}*.")
         return FlowResult.DONE
 

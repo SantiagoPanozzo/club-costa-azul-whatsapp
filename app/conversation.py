@@ -9,7 +9,7 @@ import logging
 import traceback
 from uuid import uuid4
 
-from . import message_store
+from . import message_store, usage_metrics
 from . import services_client as svc
 from .flow_ui import MENU_ID
 from .flows import FLOW_REGISTRY, FlowResult
@@ -123,6 +123,7 @@ async def handle_message(incoming: IncomingMessage) -> None:
                 session.run = None
             return
 
+        session.metric_message_id = incoming.wamid
         if session.run is not None:
             session.run.incoming_messages += 1
 
@@ -134,6 +135,8 @@ async def handle_message(incoming: IncomingMessage) -> None:
             session.completion = None
             raise
         finally:
+            identification = "identified" if session.socio is not None else session.member_lookup_status
+            usage_metrics.record_activity(phone, incoming.wamid, identification)
             await message_store.save_run(session.run, phone)
             if session.run is not None and session.run.outcome != "in_progress":
                 session.run = None
@@ -201,6 +204,7 @@ def _match_text_to_flow(incoming: IncomingMessage) -> str | None:
 
 
 async def _sign_in(phone: str, session: Session, incoming: IncomingMessage) -> None:
+    session.member_lookup_status = "unknown"
     try:
         socio = await svc.services_client.get_socio_by_whatsapp(phone)
     except ServicesAPIError:
@@ -210,10 +214,12 @@ async def _sign_in(phone: str, session: Session, incoming: IncomingMessage) -> N
         return
 
     if socio is None:
+        session.member_lookup_status = "unidentified"
         await whatsapp_client.send_text(phone, NOT_REGISTERED, session=session)
         return
 
     session.socio = socio
+    session.member_lookup_status = "identified"
     nombre = socio.get("nombre", "")
     saludo = f"¡Hola, {nombre}!" if nombre else "¡Hola!"
     await _send_main_menu(
