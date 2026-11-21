@@ -4,6 +4,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from .. import services_client as svc
+from .. import usage_metrics
 from ..flow_ui import MENU_ID, list_body_limit, paginate_rows, split_text, with_notice
 from ..formatting import format_billing_period, format_date
 from ..services_client import ServicesAPIBadRequest, ServicesAPIError
@@ -113,6 +114,7 @@ class CuotasFlow(BaseFlow[CuotasState]):
             logger.warning("Error fetching cuotas")
             session.finish(GENERIC_ERROR, outcome="error")
             return
+        usage_metrics.record_feature(phone, session.metric_message_id, "fees.view")
         await self._show_current(phone, session, state)
 
     async def _show_current(self, phone: str, session: Session, state: CuotasState, notice: str = "") -> None:
@@ -334,6 +336,7 @@ class CuotasFlow(BaseFlow[CuotasState]):
             logger.warning("Error uploading comprobante (cuota=%s)", selected)
             await self._instructions(phone, session, state, "No pude guardar el comprobante. Volvé a enviarlo.")
             return
+        usage_metrics.record_feature(phone, session.metric_message_id, "receipt.submit")
         cuota = state.pending_cuotas[selected]
         session.finish(
             f"✓ Comprobante enviado para la cuota de *{format_billing_period(cuota)}* ({_amount(cuota)}). "
