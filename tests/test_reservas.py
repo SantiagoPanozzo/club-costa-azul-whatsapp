@@ -12,6 +12,7 @@ from app.flows.reservas import (
     CONFIRM_YES,
     RESERVA_PAGE_PREFIX,
     SPACE_PAGE_PREFIX,
+    ReservasFlow,
     ReservasStep,
     _parse_time_range,
     _reservable,
@@ -86,6 +87,13 @@ def reservation(**overrides):
         "horaFin": "12:00:00",
         **overrides,
     }
+
+
+def test_reservation_time_shows_end_date_only_when_different():
+    overnight = reservation(fecha="2026-12-10", fechaFin="2026-12-11", horaInicio="20:00", horaFin="02:00")
+    assert ReservasFlow._reservation_time(overnight) == "20:00 - 02:00 (hasta 11/12/2026)"
+    assert ReservasFlow._reservation_time(reservation(fecha="2026-12-10", fechaFin="2026-12-10")) == "10:00 - 12:00"
+    assert ReservasFlow._reservation_time(reservation()) == "10:00 - 12:00"
 
 
 async def reach_confirmation(transcript, *, people="4", reason="Cumpleaños"):

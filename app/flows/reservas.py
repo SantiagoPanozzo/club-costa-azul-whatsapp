@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from enum import StrEnum
 
 from .. import services_client as svc
+from .. import usage_metrics
 from ..date_parser import parse_flexible_date
 from ..flow_ui import MENU_ID, confirmation_buttons, paginate_rows, with_notice
 from ..formatting import format_date, format_time_range
@@ -156,6 +157,7 @@ class ReservasFlow(BaseFlow[ReservasState]):
         state.space_page = 0
         if not await self._load_spaces(session, state):
             return FlowResult.DONE
+        usage_metrics.record_feature(phone, session.metric_message_id, "reservation.view")
         return await self._render_spaces(phone, session, state, notice)
 
     async def _render_spaces(self, phone: str, session: Session, state: ReservasState, notice: str = "") -> FlowResult:
@@ -381,6 +383,7 @@ class ReservasFlow(BaseFlow[ReservasState]):
             logger.exception("Error creating reserva")
             session.finish(GENERIC_ERROR, outcome="error")
             return FlowResult.DONE
+        usage_metrics.record_feature(phone, session.metric_message_id, "reservation.create")
         session.finish(
             f"¡Reserva registrada! *{fresh['nombre']}* para el {format_date(state.selected_date)}. "
             "Queda pendiente de aprobación por el club."
@@ -403,6 +406,7 @@ class ReservasFlow(BaseFlow[ReservasState]):
         state.clear_selection()
         if not await self._load_reservas(session, state):
             return FlowResult.DONE
+        usage_metrics.record_feature(phone, session.metric_message_id, "reservation.view")
         return await self._render_reservas(phone, session, state, notice)
 
     async def _render_reservas(
@@ -440,7 +444,11 @@ class ReservasFlow(BaseFlow[ReservasState]):
 
     @staticmethod
     def _reservation_time(reserva: dict) -> str:
-        return format_time_range(reserva.get("horaInicio"), reserva.get("horaFin"))
+        hours = format_time_range(reserva.get("horaInicio"), reserva.get("horaFin"))
+        fecha_fin = reserva.get("fechaFin")
+        if fecha_fin and reserva.get("fecha") and str(fecha_fin)[:10] != str(reserva["fecha"])[:10]:
+            return f"{hours} (hasta {format_date(fecha_fin)})"
+        return hours
 
     async def _handle_reserva_selection(
         self, phone: str, session: Session, state: ReservasState, msg: IncomingMessage
@@ -512,7 +520,8 @@ class ReservasFlow(BaseFlow[ReservasState]):
             )
         state.selected_reserva = fresh
         if any(
-            fresh.get(key) != reserva.get(key) for key in ("nombreEspacio", "fecha", "horaInicio", "horaFin", "estado")
+            fresh.get(key) != reserva.get(key)
+            for key in ("nombreEspacio", "fecha", "fechaFin", "horaInicio", "horaFin", "estado")
         ):
             return await self._show_cancel_confirm(
                 phone, session, state, "La reserva cambió. Revisá los datos antes de cancelar."
@@ -523,5 +532,6 @@ class ReservasFlow(BaseFlow[ReservasState]):
             logger.exception("Error cancelling reserva %s", fresh["id"])
             session.finish(GENERIC_ERROR, outcome="error")
             return FlowResult.DONE
+        usage_metrics.record_feature(phone, session.metric_message_id, "reservation.cancel")
         session.finish("Reserva cancelada.")
         return FlowResult.DONE

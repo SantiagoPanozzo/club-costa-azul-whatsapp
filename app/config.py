@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # MongoDB (message storage)
     mongodb_url: str
 
+    # Metrics remain disabled until a separate, environment-specific key is set.
+    metrics_hmac_key: str = ""
+
     log_level: str = "INFO"
 
 

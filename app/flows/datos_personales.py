@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from .. import services_client as svc
+from .. import usage_metrics
 from ..formatting import format_date
 from ..services_client import ServicesAPIError
 from ..state import Session
@@ -53,6 +54,7 @@ class DatosPersonalesFlow(BaseFlow[DatosPersonalesState]):
             session.finish("No pudimos obtener tus datos.", "empty")
             return
 
+        usage_metrics.record_feature(phone, session.metric_message_id, "profile.view")
         nombre = f"{detalle.get('nombre', '')} {detalle.get('apellido', '')}".strip()
         ci = detalle.get("ci", "—")
         email = detalle.get("email") or "—"

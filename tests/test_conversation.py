@@ -68,6 +68,38 @@ async def test_duplicate_entry_does_not_create_persisted_run(transcript):
     transcript.runs.assert_not_awaited()
 
 
+@pytest.mark.parametrize(
+    "lookup_result,lookup_error,expected",
+    [
+        ({"id": "member", "nombre": "Prueba"}, None, "identified"),
+        (None, None, "unidentified"),
+        (None, ServicesAPIError("failure"), "unknown"),
+    ],
+)
+async def test_activity_classification_follows_member_lookup(
+    transcript, monkeypatch, lookup_result, lookup_error, expected
+):
+    from unittest.mock import Mock
+
+    record = Mock()
+    monkeypatch.setattr(conversation.usage_metrics, "record_activity", record)
+    transcript.session.socio = None
+    transcript.api.get_socio_by_whatsapp.return_value = lookup_result
+    transcript.api.get_socio_by_whatsapp.side_effect = lookup_error
+    await transcript.send(text="hola")
+    assert record.call_args.args[2] == expected
+
+
+async def test_duplicate_message_never_records_activity(transcript, monkeypatch):
+    from unittest.mock import Mock
+
+    record = Mock()
+    monkeypatch.setattr(conversation.usage_metrics, "record_activity", record)
+    message_store.store_incoming.return_value = False
+    await transcript.send(text="hola")
+    record.assert_not_called()
+
+
 async def test_recovery_count_and_success_menu_belong_to_same_run(transcript):
     await transcript.send("activities")
     run = transcript.session.run
@@ -90,3 +122,52 @@ async def test_informational_long_content_is_preserved_with_only_necessary_overf
     for payload in transcript.payloads:
         body = payload.get("text", {}).get("body") or payload["interactive"]["body"]["text"]
         assert len(body) <= (4096 if payload["type"] == "text" else 1024)
+
+
+# Plan de Pruebas 6.2 #3: una persona no registrada no accede a funciones de socio.
+@pytest.mark.parametrize("pedido", ["cuotas", "reservas", "actividades"])
+async def test_unregistered_number_is_told_and_no_member_function_runs(transcript, pedido):
+    transcript.session.socio = None
+    transcript.api.get_socio_by_whatsapp.return_value = None
+
+    await transcript.send(text=pedido)
+
+    transcript.assert_single_responses(1)
+    assert transcript.bodies[-1] == conversation.NOT_REGISTERED
+    assert transcript.session.socio is None
+    assert transcript.session.active_flow is None
+    transcript.api.get_cuotas_socio.assert_not_awaited()
+    transcript.api.get_espacios.assert_not_awaited()
+    transcript.api.get_actividades.assert_not_awaited()
+
+
+async def test_unregistered_number_stays_blocked_on_later_messages(transcript):
+    transcript.session.socio = None
+    transcript.api.get_socio_by_whatsapp.return_value = None
+
+    await transcript.send(text="hola")
+    await transcript.send(text="cuotas")
+
+    assert transcript.bodies[-1] == conversation.NOT_REGISTERED
+    assert transcript.api.get_socio_by_whatsapp.await_count == 2
+    transcript.api.get_cuotas_socio.assert_not_awaited()
+
+
+# Plan de Pruebas 6.2 #2: el socio se identifica por su número y queda vinculado a su perfil.
+async def test_registered_number_is_linked_to_its_member_profile(transcript):
+    transcript.session.socio = None
+
+    await transcript.send(text="hola")
+
+    assert transcript.session.socio == {"id": "s1", "nombre": "Prueba"}
+    assert "¡Hola, Prueba!" in transcript.bodies[-1]
+
+
+# Plan de Pruebas 6.2 #5: una opción inexistente en el menú no rompe la conversación.
+async def test_unknown_text_at_main_menu_offers_the_menu_again(transcript):
+    await transcript.send(text="quiero un helado")
+
+    transcript.assert_single_responses(1)
+    assert transcript.session.active_flow is None
+    assert transcript.payloads[-1]["type"] == "interactive"
+    assert "¿Qué querés hacer?" in transcript.bodies[-1]

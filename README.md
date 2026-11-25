@@ -86,3 +86,6 @@ docker run --env-file .env -p 8000:8000 costa-azul-bot
 - **Activity lists are capped at 10 rows** (WhatsApp's interactive-list limit); if a
   club ever has more than 10 simultaneously open activities, this will need pagination.
 - **No automated tests** included in this bootstrap.
+# Métricas de uso
+
+Las métricas seudónimas de uso son opcionales y están desactivadas sin `METRICS_HMAC_KEY`. Incluyen actividad y funcionalidades de socios, con retención de 90 días en una colección separada. Ver [docs/usage-metrics.md](docs/usage-metrics.md) para configuración, semántica y limitaciones.
