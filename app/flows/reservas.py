@@ -444,7 +444,11 @@ class ReservasFlow(BaseFlow[ReservasState]):
 
     @staticmethod
     def _reservation_time(reserva: dict) -> str:
-        return format_time_range(reserva.get("horaInicio"), reserva.get("horaFin"))
+        hours = format_time_range(reserva.get("horaInicio"), reserva.get("horaFin"))
+        fecha_fin = reserva.get("fechaFin")
+        if fecha_fin and reserva.get("fecha") and str(fecha_fin)[:10] != str(reserva["fecha"])[:10]:
+            return f"{hours} (hasta {format_date(fecha_fin)})"
+        return hours
 
     async def _handle_reserva_selection(
         self, phone: str, session: Session, state: ReservasState, msg: IncomingMessage
@@ -516,7 +520,8 @@ class ReservasFlow(BaseFlow[ReservasState]):
             )
         state.selected_reserva = fresh
         if any(
-            fresh.get(key) != reserva.get(key) for key in ("nombreEspacio", "fecha", "horaInicio", "horaFin", "estado")
+            fresh.get(key) != reserva.get(key)
+            for key in ("nombreEspacio", "fecha", "fechaFin", "horaInicio", "horaFin", "estado")
         ):
             return await self._show_cancel_confirm(
                 phone, session, state, "La reserva cambió. Revisá los datos antes de cancelar."
